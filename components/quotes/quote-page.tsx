@@ -3,9 +3,9 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw } from "lucide-react";
 import { PROJECT_TYPES } from "@/lib/constants";
-import { formatCurrency, formatCurrencyOrDash, formatDate, formatPercent, todayISO, toISODate } from "@/lib/formatting";
+import { formatCurrency, formatCurrencyOrDash, formatDate, formatPercent, formatWorkingDays, todayISO, toISODate } from "@/lib/formatting";
 import { marginPercent, profitOrNull } from "@/lib/calculations";
-import { addWorkingDays, totalWorkingDays } from "@/lib/budget-calculator";
+import { addWorkingDays } from "@/lib/budget-calculator";
 import { useAppStore } from "@/store/use-app-store";
 import { PageHeader } from "@/components/shared/page-header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,45 +23,39 @@ function in30days() {
   return toISODate(d);
 }
 
-/** Entrega estimada: solo existe si hay horas cargadas (de ahí sale la duración). Nunca un valor fijo. */
-function estimatedDelivery(input: Parameters<typeof totalWorkingDays>[0], startDate: string): string | null {
-  const days = totalWorkingDays(input);
-  return days > 0 ? addWorkingDays(startDate, days) : null;
-}
-
-/** Cotizador: calcula costo, precio sugerido y margen ANTES de existir un proyecto. */
+/** Cotizador: calcula costo, precio sugerido y rentabilidad ANTES de existir un proyecto. */
 export function QuotePage() {
   const router = useRouter();
   const projects = useAppStore((s) => s.projects);
-  const operators = useAppStore((s) => s.operators);
-  const overtimeMultiplier = useAppStore((s) => s.costSettings.overtimeMultiplier);
-  const [state, setState] = useState<CalcState>(initialCalcState);
+  const { overtimeMultiplier, financialPct } = useAppStore((s) => s.costSettings);
+  const rates = useAppStore((s) => s.hourRates);
+  const [state, setState] = useState<CalcState>(() => initialCalcState(financialPct));
   const [projectType, setProjectType] = useState<string>(PROJECT_TYPES[0]);
   const [startDate, setStartDate] = useState(todayISO());
-  /** Plazo de entrega (opcional): se tipea o se elige con “Usar esta fecha”. Sin plazo, se usa la entrega estimada. */
+  /** Fecha de entrega comprometida (opcional). */
   const [deadline, setDeadline] = useState("");
   const [salesPrice, setSalesPrice] = useState(0);
   const [error, setError] = useState("");
 
   const calc = useMemo(
-    () => computeCalculator(state, startDate, projectType, { operators, projects, deadline, overtimeMultiplier, today: todayISO() }),
-    [state, startDate, projectType, operators, projects, deadline, overtimeMultiplier],
+    () => computeCalculator(state, startDate, projectType, { projects, rates, deadline, overtimeMultiplier, salesPrice }),
+    [state, startDate, projectType, projects, rates, deadline, overtimeMultiplier, salesPrice],
   );
   const profit = profitOrNull(salesPrice, calc.total);
   const margin = marginPercent(salesPrice - calc.total, salesPrice);
-  const estimated = estimatedDelivery(calc.input, startDate);
-  const dueDate = deadline || estimated;
+  const workDays = calc.schedule.workDays;
 
   const toProject = () => {
     if (!calc.hasContent) return setError("Cargá al menos un material, horas de trabajo o un costo para armar la cotización.");
     if (!(salesPrice > 0)) return setError("Definí el precio de venta (podés usar el sugerido) para crear el proyecto.");
     setError("");
-    setQuoteDraft({ state, projectType, startDate, dueDate: dueDate ?? in30days(), salesPrice });
+    // Sin fecha comprometida, Nuevo proyecto propone una (inicio + días de trabajo) para que se confirme ahí.
+    setQuoteDraft({ state, projectType, startDate, dueDate: deadline || (workDays > 0 ? addWorkingDays(startDate, workDays) : in30days()), salesPrice });
     router.push("/projects/new");
   };
 
   const reset = () => {
-    setState(initialCalcState());
+    setState(initialCalcState(financialPct));
     setSalesPrice(0);
     setDeadline("");
     setError("");
@@ -93,7 +87,7 @@ export function QuotePage() {
               <Field label="Fecha de inicio estimada" htmlFor="q-start">
                 <Input id="q-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value || todayISO())} />
               </Field>
-              <Field label="Plazo de entrega (opcional)" htmlFor="q-deadline" hint="Con plazo se calculan los días hábiles y las horas extra.">
+              <Field label="Fecha de entrega comprometida (opcional)" htmlFor="q-deadline" hint="Con fecha se ve si los días de trabajo entran y, si no, las horas extra.">
                 <Input id="q-deadline" type="date" value={deadline} min={startDate} onChange={(e) => setDeadline(e.target.value)} />
               </Field>
             </CardContent>
@@ -105,7 +99,6 @@ export function QuotePage() {
             projectType={projectType}
             salesPrice={salesPrice}
             onSalesPrice={setSalesPrice}
-            onDueDate={setDeadline}
             deadline={deadline}
           />
           {error && (
@@ -127,9 +120,11 @@ export function QuotePage() {
                   {salesPrice > 0 ? formatPercent(margin) : "—"}
                 </div>
               </div>
-              <p className="text-xs text-slate-500">
-                {dueDate ? `Entrega estimada: ${formatDate(dueDate)}` : "Entrega estimada: cargá horas de trabajo para calcularla."}
-              </p>
+              <Row label="Días de trabajo estimados" value={workDays > 0 ? formatWorkingDays(workDays) : "—"} />
+              <Row label="Entrega comprometida" value={deadline ? formatDate(deadline) : "Sin fecha"} />
+              {calc.schedule.fits === false && (
+                <p role="alert" className="text-xs text-amber-800">Los días de trabajo no entran hasta la fecha de entrega: hay horas extra.</p>
+              )}
               <Button className="w-full" onClick={toProject} disabled={!calc.hasContent || !(salesPrice > 0)}>
                 Crear proyecto con esta cotización
               </Button>

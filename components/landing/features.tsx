@@ -19,8 +19,8 @@ function MarginVisual() {
   const rows = [
     { label: "Materiales", budget: 62, real: 74, over: true },
     { label: "Mano de obra", budget: 48, real: 45 },
-    { label: "Tercerizaciones", budget: 30, real: 30 },
-    { label: "Instalación", budget: 22, real: 14 },
+    { label: "Administración y diseño", budget: 30, real: 30 },
+    { label: "Transporte y fletes", budget: 22, real: 14 },
   ];
   return (
     <div className="mt-6 grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end" aria-hidden>

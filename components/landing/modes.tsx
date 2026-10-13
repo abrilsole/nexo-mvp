@@ -107,8 +107,8 @@ export function Modes() {
               <div className="mt-10 space-y-2 rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur" aria-hidden>
                 {[
                   { c: "Materiales", b: "$ 4,0 M", r: "$ 4,85 M", d: "+$ 850.000", bad: true },
-                  { c: "Tercerizaciones", b: "$ 600 k", r: "$ 600 k", d: "en línea" },
-                  { c: "Logística", b: "$ 300 k", r: "$ 350 k", d: "+$ 50.000" },
+                  { c: "Mano de obra", b: "$ 600 k", r: "$ 600 k", d: "en línea" },
+                  { c: "Transporte y fletes", b: "$ 300 k", r: "$ 350 k", d: "+$ 50.000" },
                 ].map((row) => (
                   <div key={row.c} className="grid grid-cols-[1fr_auto_auto] items-center gap-4 rounded-xl px-2 py-2 text-xs tabular sm:grid-cols-[1fr_auto_auto_auto]">
                     <span className="font-medium text-white">{row.c}</span>

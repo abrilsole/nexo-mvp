@@ -53,7 +53,7 @@ describe("desvíos", () => {
 });
 
 describe("margen proyectado", () => {
-  const lines = [line("materials", null, 400), line("labor", null, 200), line("installation", null, 100)];
+  const lines = [line("materials", null, 400), line("labor", null, 200), line("transport", null, 100)];
   it("sin registros reales: proyectado = presupuesto", () => {
     const p = project({ budgetLines: lines });
     expect(projectedFinalCost(p)).toBe(700);
@@ -71,7 +71,7 @@ describe("margen proyectado", () => {
     expect(mainDeviation(projectEconomics(p).categories)?.category).toBe("materials");
   });
   it("costo no presupuestado entra al proyectado", () => {
-    const p = project({ budgetLines: lines, actualEntries: [{ id: "a", projectId: "p", date: "2026-01-02", type: "other", category: "machines", description: "x", amount: 100, createdBy: "t", createdAt: "x" }] });
+    const p = project({ budgetLines: lines, actualEntries: [{ id: "a", projectId: "p", date: "2026-01-02", type: "other", category: "admin", description: "x", amount: 100, createdBy: "t", createdAt: "x" }] });
     expect(projectedFinalCost(p)).toBe(800);
   });
 });

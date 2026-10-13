@@ -2,12 +2,15 @@
 // Traducción entre el modelo de dominio (types/) y las filas de Supabase.
 // El dominio no conoce la base: todo el snake_case vive acá.
 // ─────────────────────────────────────────────────────────────
-import { normalizeCategory } from "@/lib/constants";
+import { DEFAULT_FINANCIAL_PCT, DEFAULT_OVERTIME_MULTIPLIER, normalizeCategory } from "@/lib/constants";
+import { isRubroId } from "@/lib/rubros";
 import type {
   ActivityEvent,
   ActualEntry,
   Attachment,
   BudgetLine,
+  CostSettings,
+  HourRate,
   MaterialRequest,
   MaterialUsageEntry,
   Operator,
@@ -94,8 +97,9 @@ const childToRow: { [K in ChildKey]: (org: string, projectId: string, item: Proj
     unit_cost: l.unitCost,
     total: l.total,
     notes: l.notes ?? null,
+    rubro: l.rubro ?? null,
+    hour_rate_id: l.hourRateId ?? null,
     operator_id: l.operatorId ?? null,
-    labor_role: l.laborRole ?? null,
     hour_type: l.hourType ?? null,
     overtime_multiplier: l.overtimeMultiplier ?? null,
   }),
@@ -223,8 +227,9 @@ function budgetLineFromRow(r: Row): BudgetLine {
     unitCost: num(r.unit_cost),
     total: num(r.total),
     notes: opt(r.notes as string | null),
+    rubro: isRubroId(r.rubro) ? r.rubro : undefined,
+    hourRateId: opt(r.hour_rate_id as string | null | undefined),
     operatorId: opt(r.operator_id as string | null | undefined),
-    laborRole: opt(r.labor_role as string | null | undefined),
     hourType: r.hour_type === "normal" || r.hour_type === "overtime" ? r.hour_type : undefined,
     overtimeMultiplier: r.overtime_multiplier === null || r.overtime_multiplier === undefined ? undefined : num(r.overtime_multiplier),
   };
@@ -591,4 +596,28 @@ export function requestFromRow(r: Row): MaterialRequest {
     resolvedAt: r.resolved_at ? iso(r.resolved_at) : undefined,
     resolvedBy: opt(r.resolved_by as string | null),
   };
+}
+
+// ── Costos de Gestión (Taller nunca los lee) ──────────────────
+
+export function costSettingsFromRow(r: Row): CostSettings {
+  const m = r.overtime_multiplier === null || r.overtime_multiplier === undefined ? NaN : Number(r.overtime_multiplier);
+  const f = r.financial_pct === null || r.financial_pct === undefined ? NaN : Number(r.financial_pct);
+  return {
+    overtimeMultiplier: Number.isFinite(m) && m >= 1 ? m : DEFAULT_OVERTIME_MULTIPLIER,
+    financialPct: Number.isFinite(f) && f >= 0 ? f : DEFAULT_FINANCIAL_PCT,
+  };
+}
+
+export function hourRateFromRow(r: Row): HourRate {
+  return {
+    id: String(r.id),
+    name: String(r.name),
+    hourlyRate: num(r.hourly_rate),
+    category: r.category === "admin" ? "admin" : "labor",
+  };
+}
+
+export function hourRateToRow(org: string, h: HourRate, position: number): Row {
+  return { organization_id: org, id: h.id, name: h.name, hourly_rate: h.hourlyRate, category: h.category, position, updated_at: new Date().toISOString() };
 }

@@ -32,13 +32,13 @@ function in30days() {
 export function NewProjectWizard() {
   const router = useRouter();
   const projects = useAppStore((s) => s.projects);
-  const operators = useAppStore((s) => s.operators);
-  const overtimeMultiplier = useAppStore((s) => s.costSettings.overtimeMultiplier);
+  const { overtimeMultiplier, financialPct } = useAppStore((s) => s.costSettings);
+  const rates = useAppStore((s) => s.hourRates);
   const createProject = useAppStore((s) => s.createProject);
   const code = useMemo(() => nextProjectCode(projects), [projects]);
   const [draft] = useState(peekQuoteDraft);
   const [step, setStep] = useState(0);
-  const [calcState, setCalcState] = useState<CalcState>(() => draft?.state ?? initialCalcState());
+  const [calcState, setCalcState] = useState<CalcState>(() => draft?.state ?? initialCalcState(financialPct));
   const [priceError, setPriceError] = useState("");
   const [formError, setFormError] = useState("");
 
@@ -62,8 +62,8 @@ export function NewProjectWizard() {
   const projectType = useWatch({ control, name: "projectType" });
   const dueDate = useWatch({ control, name: "dueDate" });
   const calc = useMemo(
-    () => computeCalculator(calcState, startDate, projectType, { operators, projects, deadline: dueDate, overtimeMultiplier, today: todayISO() }),
-    [calcState, startDate, projectType, operators, projects, dueDate, overtimeMultiplier],
+    () => computeCalculator(calcState, startDate, projectType, { projects, rates, deadline: dueDate, overtimeMultiplier, salesPrice }),
+    [calcState, startDate, projectType, projects, rates, dueDate, overtimeMultiplier, salesPrice],
   );
   const budget = calc.total;
   const profit = profitOrNull(salesPrice, budget);
@@ -151,7 +151,7 @@ export function NewProjectWizard() {
                 <Field label="Fecha inicio" htmlFor="startDate" error={formState.errors.startDate?.message}>
                   <Input id="startDate" type="date" {...register("startDate")} />
                 </Field>
-                <Field label="Plazo de entrega" htmlFor="dueDate" error={formState.errors.dueDate?.message} hint="Con este plazo se calculan los días hábiles y las horas extra.">
+                <Field label="Fecha de entrega comprometida" htmlFor="dueDate" error={formState.errors.dueDate?.message} hint="Con esta fecha se ve si los días de trabajo entran y, si no, las horas extra.">
                   <Input id="dueDate" type="date" {...register("dueDate")} aria-invalid={!!formState.errors.dueDate} />
                 </Field>
                 <Field label="Responsable" htmlFor="owner" error={formState.errors.owner?.message}>
@@ -169,7 +169,7 @@ export function NewProjectWizard() {
                 <CardHeader>
                   <CardTitle>Costo presupuestado</CardTitle>
                   <p className="text-sm text-slate-500">
-                    Armalo con la calculadora guiada: materiales, operarios, máquinas y otros costos. Te sugiere un precio de venta y, una vez aprobado, es el presupuesto base contra el que se miden los desvíos.
+                    Armalo por rubros: materiales, operarios × horas y horas administrativas / diseño de cada rubro, más transporte e imprevistos. Te sugiere un precio de venta y, una vez aprobado, es el presupuesto base contra el que se miden los desvíos.
                   </p>
                 </CardHeader>
               </Card>
@@ -184,7 +184,6 @@ export function NewProjectWizard() {
                     setValue("salesPrice", n, { shouldValidate: true });
                     if (n > 0) setPriceError("");
                   }}
-                  onDueDate={(iso) => setValue("dueDate", iso, { shouldValidate: true })}
                   deadline={dueDate}
                 />
               {formError && <p role="alert" className="text-sm text-red-600">{formError}</p>}

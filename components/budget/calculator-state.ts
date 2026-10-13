@@ -1,10 +1,29 @@
-// Estado de la calculadora de presupuesto (campos como texto para permitir vacíos) y su conversión a números.
-import type { BudgetCategory, Operator, Project } from "@/types";
-import { buildBudgetLines, EMPTY_DIRECT, totalOfLines, type CalcAdjustment, type CalculatorInput } from "@/lib/budget-calculator";
-import { planLabor, type LaborPlan } from "@/lib/capacity";
+// Estado de la cotización por rubros (campos como texto para permitir vacíos) y su conversión a números.
+// Lo usan el Cotizador y Nuevo proyecto: los dos muestran la misma calculadora con el mismo resultado.
+import type { BudgetCategory, HourRate, Project, RubroId } from "@/types";
+import {
+  adjustmentLines,
+  analyzePrice,
+  costGroups,
+  financialLine,
+  rateFor,
+  rubroLabor,
+  rubroLines,
+  suggestedPrice,
+  totalOfLines,
+  workSchedule,
+  type CalcAdjustment,
+  type CostGroups,
+  type PriceAnalysis,
+  type QuoteInput,
+  type RubroLabor,
+  type SuggestedPrice,
+  type WorkSchedule,
+} from "@/lib/budget-calculator";
 import { benchmarksForType, suggestedAdjustments, type CategoryBenchmark, type TypeBenchmarks } from "@/lib/historical-benchmarks";
 import type { BudgetLineInput } from "@/lib/project-operations";
-import { MATERIAL_CATALOG } from "@/lib/constants";
+import { DEFAULT_FINANCIAL_PCT, MATERIAL_CATALOG } from "@/lib/constants";
+import { rubroDef } from "@/lib/rubros";
 import { parseDecimal } from "@/lib/schemas";
 
 export interface MaterialRow {
@@ -15,54 +34,48 @@ export interface MaterialRow {
   unitCost: string;
   wastePct: string;
 }
-export interface LaborRow {
+
+/** Un rubro en edición. Lista plana y serializable: un conjunto de rubros se puede guardar como plantilla. */
+export interface RubroRow {
   key: string;
-  role: string;
-  hours: string;
-  /** Operarios activos de ese rol elegidos para hacer las horas (el costo por hora sale de cada uno). */
-  operatorIds: string[];
-}
-export interface MachineRow {
-  key: string;
-  name: string;
-  hours: string;
-  hourlyCost: string;
+  rubro: RubroId;
+  materials: MaterialRow[];
+  workers: string;
+  hoursPerWorker: string;
+  adminHours: string;
+  /** Solo rubros de importe (Transporte / Fletes, Imprevistos). */
+  amount: string;
 }
 
 export interface CalcState {
-  materials: MaterialRow[];
-  labor: LaborRow[];
-  machines: MachineRow[];
-  outsourcing: string;
-  logistics: string;
-  installation: string;
-  contingencyPct: string;
+  rubros: RubroRow[];
+  /** Jornada diaria por operario. */
   hoursPerDay: string;
-  installationDays: string;
-  targetMarginPct: string;
+  materialsTargetPct: string;
+  laborTargetPct: string;
+  financialPct: string;
   /** Categorías cuyo ajuste por historial el usuario decidió aplicar. */
   appliedAdjustments: BudgetCategory[];
 }
 
 let seq = 0;
-export const rowKey = () => `r${Date.now()}${(seq += 1)}`;
+const rowKey = () => `r${Date.now()}${(seq += 1)}`;
 
-export const newMaterialRow = (): MaterialRow => ({ key: rowKey(), name: "", unit: "placa", quantity: "", unitCost: "", wastePct: "10" });
-export const newLaborRow = (): LaborRow => ({ key: rowKey(), role: "", hours: "", operatorIds: [] });
-export const newMachineRow = (): MachineRow => ({ key: rowKey(), name: "", hours: "", hourlyCost: "" });
+/** Lo más simple: cantidad 1 y el costo total alcanza para algo que se compra hecho. */
+export const newMaterialRow = (): MaterialRow => ({ key: rowKey(), name: "", unit: "u", quantity: "1", unitCost: "", wastePct: "0" });
 
-export function initialCalcState(): CalcState {
+export function newRubroRow(rubro: RubroId): RubroRow {
+  const full = rubroDef(rubro).kind === "full";
+  return { key: rowKey(), rubro, materials: full ? [newMaterialRow()] : [], workers: full ? "1" : "", hoursPerWorker: "", adminHours: "", amount: "" };
+}
+
+export function initialCalcState(financialPct = DEFAULT_FINANCIAL_PCT): CalcState {
   return {
-    materials: [newMaterialRow()],
-    labor: [newLaborRow()],
-    machines: [],
-    outsourcing: "",
-    logistics: "",
-    installation: "",
-    contingencyPct: "5",
+    rubros: [newRubroRow("carpinteria_madera")],
     hoursPerDay: "8",
-    installationDays: "0",
-    targetMarginPct: "30",
+    materialsTargetPct: "30",
+    laborTargetPct: "30",
+    financialPct: String(financialPct).replace(".", ","),
     appliedAdjustments: [],
   };
 }
@@ -72,67 +85,46 @@ const n = (s: string) => {
   return Number.isFinite(v) && v > 0 ? v : 0;
 };
 
-/** Lo que la calculadora necesita además de lo que se tipea: operarios, otros proyectos, plazo y multiplicador. */
+/** Lo que la calculadora necesita además de lo que se tipea. */
 export interface CalculatorContext {
-  operators: Operator[];
   projects: Project[];
-  /** Plazo de entrega (opcional). Sin plazo no se calculan horas extra. */
-  deadline: string;
+  rates: HourRate[];
   overtimeMultiplier: number;
-  today: string;
-  excludeProjectId?: string;
+  /** Fecha de entrega comprometida ("" = sin fecha). */
+  deadline: string;
+  /** Precio de venta elegido (0 = todavía no): de él sale el gasto financiero. */
+  salesPrice: number;
 }
 
-export function laborPlanFor(s: CalcState, startDate: string, ctx: CalculatorContext): LaborPlan {
-  return planLabor(
-    s.labor.map((l) => ({ role: l.role.trim(), hours: n(l.hours), operatorIds: l.operatorIds })),
-    {
-      operators: ctx.operators,
-      projects: ctx.projects,
-      startDate,
-      deadline: ctx.deadline || null,
-      installationDays: n(s.installationDays),
-      hoursPerDay: n(s.hoursPerDay),
-      overtimeMultiplier: ctx.overtimeMultiplier,
-      today: ctx.today,
-      excludeProjectId: ctx.excludeProjectId,
-    },
-  );
-}
-
-export function calcStateToInput(s: CalcState, startDate: string, plan: LaborPlan, overtimeMultiplier: number): CalculatorInput {
+function calcStateToInput(s: CalcState, startDate: string, ctx: Pick<CalculatorContext, "rates" | "overtimeMultiplier" | "deadline">): QuoteInput {
   return {
-    materials: s.materials.map((m) => ({
-      materialId: MATERIAL_CATALOG.find((c) => c.name.toLowerCase() === m.name.trim().toLowerCase())?.id,
-      name: m.name,
-      unit: m.unit,
-      quantity: n(m.quantity),
-      unitCost: n(m.unitCost),
-      wastePct: n(m.wastePct),
-    })),
-    labor: plan.roles.map((r) => ({
-      role: r.role,
-      hours: r.hours,
-      assignments: r.operators.map((o) => ({
-        operatorId: o.operatorId,
-        operatorName: o.name,
-        hourlyCost: o.hourlyCost,
-        normalHours: o.normalHours,
-        overtimeHours: o.overtimeHours,
+    rubros: s.rubros.map((r) => ({
+      rubro: r.rubro,
+      materials: r.materials.map((m) => ({
+        materialId: MATERIAL_CATALOG.find((c) => c.name.toLowerCase() === m.name.trim().toLowerCase())?.id,
+        name: m.name,
+        unit: m.unit,
+        quantity: n(m.quantity),
+        unitCost: n(m.unitCost),
+        wastePct: n(m.wastePct),
       })),
+      workers: Math.round(n(r.workers)),
+      hoursPerWorker: n(r.hoursPerWorker),
+      adminHours: n(r.adminHours),
+      amount: n(r.amount),
     })),
-    machines: s.machines.map((m) => ({ name: m.name, hours: n(m.hours), hourlyCost: n(m.hourlyCost) })),
-    direct: { ...EMPTY_DIRECT, outsourcing: n(s.outsourcing), logistics: n(s.logistics), installation: n(s.installation) },
-    contingencyPct: n(s.contingencyPct),
     hoursPerDay: n(s.hoursPerDay),
-    installationDays: n(s.installationDays),
-    targetMarginPct: n(s.targetMarginPct),
     startDate,
-    overtimeMultiplier,
+    deadline: ctx.deadline || null,
+    rates: ctx.rates,
+    overtimeMultiplier: ctx.overtimeMultiplier,
+    materialsTargetPct: n(s.materialsTargetPct),
+    laborTargetPct: n(s.laborTargetPct),
+    financialPct: n(s.financialPct),
   };
 }
 
-export function toAdjustments(
+function toAdjustments(
   applied: BudgetCategory[],
   suggestions: { category: BudgetCategory; avgOverrunPct: number; sampleSize: number }[],
   projectType: string,
@@ -142,22 +134,70 @@ export function toAdjustments(
     .map((s) => ({ category: s.category, pct: Math.round(s.avgOverrunPct * 10) / 10, sampleSize: s.sampleSize, projectType }));
 }
 
-export interface CalculatorResult {
-  input: CalculatorInput;
-  labor: LaborPlan;
+export interface RubroResult {
+  key: string;
+  rubro: RubroId;
+  /** null en rubros de importe. */
+  labor: RubroLabor | null;
   lines: BudgetLineInput[];
   total: number;
+}
+
+export interface CalculatorResult {
+  input: QuoteInput;
+  rubros: RubroResult[];
+  schedule: WorkSchedule;
+  /** Todas las líneas del costo presupuestado (rubros + ajustes + gasto financiero). */
+  lines: BudgetLineInput[];
+  total: number;
+  costs: CostGroups;
+  suggested: SuggestedPrice | null;
+  /** Rentabilidad con el precio elegido (null sin precio). */
+  atPrice: PriceAnalysis | null;
+  /** Tarifas usadas (undefined = no hay tipo de hora de esa categoría). */
+  rates: { labor?: HourRate; admin?: HourRate };
   benchmarks: TypeBenchmarks;
   suggestions: CategoryBenchmark[];
   hasContent: boolean;
 }
 
-/** Todo lo derivado de la calculadora en un solo lugar (el wizard y el panel usan el mismo resultado). */
+/** Todo lo derivado de la cotización en un solo lugar (el Cotizador y Nuevo proyecto usan el mismo resultado). */
 export function computeCalculator(state: CalcState, startDate: string, projectType: string, ctx: CalculatorContext): CalculatorResult {
-  const labor = laborPlanFor(state, startDate, ctx);
-  const input = calcStateToInput(state, startDate, labor, ctx.overtimeMultiplier);
+  const input = calcStateToInput(state, startDate, ctx);
+  const rates = { labor: rateFor(ctx.rates, "labor"), admin: rateFor(ctx.rates, "admin") };
+  const schedule = workSchedule(input.rubros, input.hoursPerDay, startDate, input.deadline);
+  const rubros = input.rubros.map((r, i): RubroResult => {
+    const labor =
+      rubroDef(r.rubro).kind === "full"
+        ? rubroLabor(r, {
+            normalShare: schedule.normalShare,
+            laborRate: rates.labor?.hourlyRate ?? 0,
+            adminRate: rates.admin?.hourlyRate ?? 0,
+            overtimeMultiplier: input.overtimeMultiplier,
+          })
+        : null;
+    const lines = rubroLines(r, labor, rates, input.overtimeMultiplier);
+    return { key: state.rubros[i].key, rubro: r.rubro, labor, lines, total: totalOfLines(lines) };
+  });
   const benchmarks = benchmarksForType(ctx.projects, projectType);
   const suggestions = suggestedAdjustments(benchmarks);
-  const lines = buildBudgetLines(input, toAdjustments(state.appliedAdjustments, suggestions, projectType));
-  return { input, labor, lines, total: totalOfLines(lines), benchmarks, suggestions, hasContent: lines.length > 0 };
+  const rubroLinesAll = rubros.flatMap((r) => r.lines);
+  const withAdjustments = [...rubroLinesAll, ...adjustmentLines(rubroLinesAll, toAdjustments(state.appliedAdjustments, suggestions, projectType))];
+  const costs = costGroups(withAdjustments);
+  const financial = financialLine(input.financialPct, ctx.salesPrice);
+  const lines = financial ? [...withAdjustments, financial] : withAdjustments;
+  return {
+    input,
+    rubros,
+    schedule,
+    lines,
+    total: totalOfLines(lines),
+    costs,
+    suggested: suggestedPrice(costs, input),
+    atPrice: ctx.salesPrice > 0 ? analyzePrice(ctx.salesPrice, costs, input.financialPct) : null,
+    rates,
+    benchmarks,
+    suggestions,
+    hasContent: withAdjustments.length > 0,
+  };
 }

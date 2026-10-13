@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Lock, Pencil } from "lucide-react";
 import type { Project } from "@/types";
 import { BUDGET_EDITABLE_STATUSES, CATEGORY_LABELS, CATEGORY_ORDER } from "@/lib/constants";
+import { rubroLabel } from "@/lib/rubros";
 import { budgetByCategory, budgetTotal, hasSalesPrice, marginPercent, profitOrNull } from "@/lib/calculations";
 import { formatCurrency, formatCurrencyOrDash, formatNumber, formatPercent } from "@/lib/formatting";
 import { useAppStore } from "@/store/use-app-store";
@@ -78,6 +79,7 @@ export function BudgetTab({ project }: { project: Project }) {
             <Table>
               <THead>
                 <TR>
+                  <TH>Rubro</TH>
                   <TH>Categoría</TH>
                   <TH>Descripción</TH>
                   <TH className="text-right">Cantidad</TH>
@@ -91,6 +93,7 @@ export function BudgetTab({ project }: { project: Project }) {
                   .sort((a, b) => CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category))
                   .map((l) => (
                     <TR key={l.id}>
+                      <TD className="whitespace-nowrap text-slate-500">{rubroLabel(l.rubro)}</TD>
                       <TD className="whitespace-nowrap text-slate-500">{CATEGORY_LABELS[l.category]}</TD>
                       <TD className="font-medium text-slate-900">{l.description}</TD>
                       <TD className="text-right tabular">{l.quantity === null ? "—" : formatNumber(l.quantity)}</TD>
@@ -100,7 +103,7 @@ export function BudgetTab({ project }: { project: Project }) {
                     </TR>
                   ))}
                 <TR className="bg-slate-50 font-semibold">
-                  <TD colSpan={5}>Costo presupuestado total</TD>
+                  <TD colSpan={6}>Costo presupuestado total</TD>
                   <TD className="text-right tabular">{formatCurrency(total)}</TD>
                 </TR>
               </TBody>
@@ -109,7 +112,7 @@ export function BudgetTab({ project }: { project: Project }) {
           <Card>
             <CardHeader>
               <CardTitle>Resumen</CardTitle>
-              <CardDescription>Las siete categorías y la rentabilidad esperada</CardDescription>
+              <CardDescription>Las categorías de reporte y la rentabilidad esperada</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               {CATEGORY_ORDER.map((c) => (

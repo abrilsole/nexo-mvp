@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useState } from "react";
 import type { AlertSettings } from "@/types";
-import { APP_NAME, APP_SUBTITLE, COMPANY_NAME, DEFAULT_OVERTIME_MULTIPLIER, DEFAULT_SETTINGS } from "@/lib/constants";
+import { APP_NAME, APP_SUBTITLE, COMPANY_NAME, DEFAULT_FINANCIAL_PCT, DEFAULT_OVERTIME_MULTIPLIER, DEFAULT_SETTINGS } from "@/lib/constants";
 import { formatCurrency } from "@/lib/formatting";
 import { parseDecimal } from "@/lib/schemas";
 import { useAppStore } from "@/store/use-app-store";
@@ -194,7 +194,9 @@ export function SettingsPage() {
         </CardContent>
       </Card>
 
+      <HourRatesCard />
       <OvertimeCard />
+      <FinancialCard />
 
       <Card className="mt-6">
         <CardHeader>
@@ -284,6 +286,112 @@ export function SettingsPage() {
   );
 }
 
+/** Tarifas por tipo de hora: solo las ve y las cambia Gestión (Taller nunca las recibe). */
+function HourRatesCard() {
+  const rates = useAppStore((s) => s.hourRates);
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle>Tipos de hora y tarifas</CardTitle>
+        <CardDescription>
+          El Cotizador valoriza las horas de cada rubro con la tarifa de su tipo de hora. Cada cotización guarda la tarifa vigente al momento de
+          hacerla: cambiarla acá no modifica las cotizaciones ni los proyectos ya creados. Los valores iniciales son los del cliente piloto.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {rates.map((r) => (
+          <HourRateRow key={r.id} id={r.id} name={r.name} hourlyRate={r.hourlyRate} />
+        ))}
+        <p className="text-xs text-slate-500">
+          No cambia cómo se calcula el costo real de las horas cargadas desde Taller: ese sigue saliendo del costo por hora de cada operario.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function HourRateRow({ id, name, hourlyRate }: { id: string; name: string; hourlyRate: number }) {
+  const updateHourRate = useAppStore((s) => s.updateHourRate);
+  const [value, setValue] = useState(String(hourlyRate));
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  return (
+    <form
+      noValidate
+      className="flex flex-wrap items-end gap-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const res = updateHourRate(id, parseDecimal(value));
+        if (!res.ok) return setError(res.error);
+        setError("");
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
+      }}
+    >
+      <Field label={`${name} (por hora)`} htmlFor={`rate-${id}`} error={error || undefined} className="w-full sm:max-w-xs">
+        <Input id={`rate-${id}`} inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} aria-invalid={!!error} />
+      </Field>
+      <Button type="submit" variant="outline">Guardar</Button>
+      {saved && (
+        <span role="status" className="text-sm text-emerald-700">
+          Guardado: {formatCurrency(hourlyRate)} por hora
+        </span>
+      )}
+    </form>
+  );
+}
+
+/** Gasto financiero por defecto del Cotizador (a confirmar con el cliente). Solo Gestión. */
+function FinancialCard() {
+  const financialPct = useAppStore((s) => s.costSettings.financialPct);
+  const updateCostSettings = useAppStore((s) => s.updateCostSettings);
+  const [value, setValue] = useState(() => String(financialPct).replace(".", ","));
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const save = (pct: number) => {
+    const res = updateCostSettings({ financialPct: pct });
+    if (!res.ok) return setError(res.error);
+    setError("");
+    setValue(String(pct).replace(".", ","));
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle>Gasto financiero</CardTitle>
+        <CardDescription>
+          Porcentaje sobre el precio de venta. Es un costo: aparece como línea &quot;Gasto financiero&quot; en el costo presupuestado. Es el valor con el que
+          arranca cada cotización; en el Cotizador se puede cambiar. El 5% inicial es un supuesto a confirmar con el cliente.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form
+          noValidate
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            save(parseDecimal(value));
+          }}
+        >
+          <Field label="Gasto financiero (% del precio de venta)" htmlFor="financial-pct" error={error || undefined} className="w-full sm:max-w-sm">
+            <Input id="financial-pct" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} aria-invalid={!!error} />
+          </Field>
+          <Button type="submit">Guardar</Button>
+          <Button type="button" variant="outline" onClick={() => save(DEFAULT_FINANCIAL_PCT)}>
+            Volver a {DEFAULT_FINANCIAL_PCT}%
+          </Button>
+          {saved && (
+            <span role="status" className="text-sm text-emerald-700">
+              Guardado
+            </span>
+          )}
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
 /** Multiplicador de horas extra: solo lo ve y lo cambia Gestión (Taller nunca lo recibe). */
 function OvertimeCard() {
   const multiplier = useAppStore((s) => s.costSettings.overtimeMultiplier);
@@ -308,8 +416,8 @@ function OvertimeCard() {
       <CardHeader>
         <CardTitle>Horas extra</CardTitle>
         <CardDescription>
-          En el Cotizador, las horas que no entran en el horario normal de un operario hasta el plazo de entrega se calculan como horas extra:
-          costo por hora × este multiplicador. Suman a Mano de obra.
+          En el Cotizador, si los días de trabajo no entran hasta la fecha de entrega comprometida, las horas que no entran se calculan como horas
+          extra: tarifa por hora × este multiplicador. Suman a Mano de obra.
         </CardDescription>
       </CardHeader>
       <CardContent>

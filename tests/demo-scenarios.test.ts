@@ -1,7 +1,7 @@
 // Escenarios obligatorios de la demo, sobre el seed real de P-1042.
 import { describe, expect, it } from "vitest";
 import { buildSeed, MAIN_DEMO_PROJECT_ID } from "@/lib/seed-data";
-import { actualByCategory, projectEconomics } from "@/lib/calculations";
+import { projectEconomics } from "@/lib/calculations";
 import { projectAlerts, projectHealth } from "@/lib/alerts";
 import { materialRows } from "@/lib/material-reconciliation";
 import { DEFAULT_SETTINGS as S } from "@/lib/constants";
@@ -47,7 +47,8 @@ describe("P-1042 — escenarios 1 a 3", () => {
   });
   it("el flujo del ledger coincide con el costo de materiales del proyecto", () => {
     const { p, stock } = seed();
-    expect(Math.abs(projectMaterialFlow(stock, p.id).attributableCost - actualByCategory(p).materials)).toBeLessThan(1);
+    // Materiales también incluye trabajo comprado hecho (Lote 4): el ledger se compara con el costo de los consumos.
+    expect(Math.abs(projectMaterialFlow(stock, p.id).attributableCost - projectEconomics(p).materialActualCost)).toBeLessThan(1);
   });
 });
 
@@ -73,7 +74,7 @@ describe("escenario 4 y 5 — compra NO cambia margen, consumo SÍ", () => {
     expect(e.projectedMargin!).toBeLessThan(before.projectedMargin!);
     expect(res.project.materialUsages.at(-1)?.unitCostOrigin).toBe("purchase");
     // Gestión (ledger) y proyecto (registros) dicen lo mismo.
-    expect(projectMaterialFlow(res.stock, p.id).attributableCost).toBe(actualByCategory(res.project).materials);
+    expect(projectMaterialFlow(res.stock, p.id).attributableCost).toBe(projectEconomics(res.project).materialActualCost);
   });
   it("no se puede consumir material que el proyecto no tiene asignado", () => {
     const { p, stock } = seed();
@@ -90,7 +91,7 @@ describe("escenario 6 — horas", () => {
     const entry = after.actualEntries.at(-1)!;
     expect(entry.amount).toBe(150_000);
     expect(entry.operatorId).toBe("op-juan");
-    expect(projectEconomics(after).projectedFinalCost).toBe(before.projectedFinalCost + 150_000);
+    expect(projectEconomics(after).actualCostToDate).toBe(before.actualCostToDate + 150_000);
     // Subir la tarifa no cambia lo ya registrado.
     const raised = operators.map((o) => (o.id === "op-juan" ? { ...o, hourlyCost: 99_000 } : o));
     expect(after.actualEntries.at(-1)!.labor?.hourlyCost).toBe(15_000);

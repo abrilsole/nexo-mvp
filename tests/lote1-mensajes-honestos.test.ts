@@ -6,7 +6,7 @@ import { openAlertCount, projectAlerts, projectHealth, splitAlerts, allAlerts } 
 import { remainingBudgetText } from "@/lib/insights";
 import { activityTimeline } from "@/lib/activity";
 import { showDelayChart } from "@/lib/budget-calculator";
-import { APP_NAME, CATEGORY_LABELS, CATEGORY_ORDER, DEFAULT_SETTINGS as S, normalizeCategory } from "@/lib/constants";
+import { APP_NAME, CATEGORY_LABELS, CATEGORY_ORDER, DEFAULT_SETTINGS as S } from "@/lib/constants";
 import { formatDays, formatMarginPoints, formatWorkingDays } from "@/lib/formatting";
 import { buildSeed } from "@/lib/seed-data";
 import { line, project, usage } from "./helpers";
@@ -29,16 +29,16 @@ describe("la tabla de desvío suma exacto a la Diferencia", () => {
       status: "completed",
       isClosed: true,
       salesPrice: 10_000,
-      budgetLines: [line("materials", null, 4_000), line("labor", null, 2_000), line("logistics", null, 500)],
+      budgetLines: [line("materials", null, 4_000), line("labor", null, 2_000), line("transport", null, 500)],
       materialUsages: [usage({ quantityConsumed: 1, unitCost: 4_513.5 })],
       actualEntries: [
         { id: "a1", projectId: "p", date: "2026-01-05", type: "labor", category: "labor", description: "h", amount: 1_700, createdBy: "t", createdAt: "x" },
-        { id: "a2", projectId: "p", date: "2026-01-06", type: "other", category: "machines", description: "Seccionadora", amount: 300, createdBy: "t", createdAt: "x" },
+        { id: "a2", projectId: "p", date: "2026-01-06", type: "other", category: "admin", description: "Diseño de planos", amount: 300, createdBy: "t", createdAt: "x" },
       ],
     });
     const econ = projectEconomics(p);
     const rows = econ.categories.filter((c) => c.projectedVariance.amount !== 0);
-    expect(rows.map((x) => x.category).sort()).toEqual(["labor", "logistics", "machines", "materials"]);
+    expect(rows.map((x) => x.category).sort()).toEqual(["admin", "labor", "materials", "transport"]);
     expect(rows.some((x) => x.projectedVariance.amount < 0)).toBe(true);
     const sum = econ.categories.reduce((s, x) => s + x.projectedVariance.amount, 0);
     expect(sum).toBeCloseTo(econ.costOverrun, 6);
@@ -141,18 +141,12 @@ describe("sin precio de venta", () => {
   });
 });
 
-describe("siete categorías", () => {
-  it("son siempre las mismas, incluida Máquinas, también en la tabla de desvío", () => {
+describe("categorías de reporte (Lote 4)", () => {
+  it("son siempre las mismas seis, también en la tabla de desvío", () => {
     expect(CATEGORY_ORDER.map((c) => CATEGORY_LABELS[c])).toEqual([
-      "Materiales", "Mano de obra", "Máquinas", "Tercerizaciones", "Logística", "Instalación", "Imprevistos",
+      "Materiales", "Mano de obra", "Administración y diseño", "Transporte y fletes", "Gasto financiero", "Imprevistos",
     ]);
     expect(projectEconomics(project()).categories.map((c) => c.category)).toEqual(CATEGORY_ORDER);
-  });
-  it("normaliza categorías viejas", () => {
-    expect(normalizeCategory("finishing")).toBe("outsourcing");
-    expect(normalizeCategory("other", "Máquina: Seccionadora")).toBe("machines");
-    expect(normalizeCategory("other", "Varios")).toBe("contingency");
-    expect(normalizeCategory("labor")).toBe("labor");
   });
 });
 

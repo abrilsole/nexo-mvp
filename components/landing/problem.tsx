@@ -11,7 +11,7 @@ export function Problem() {
         <SectionHeading
           eyebrow="El problema"
           title="Entre lo que cotizaste y lo que pasó, se pierde la rentabilidad"
-          subtitle="Al cotizar estimás materiales, horas, tercerizaciones, logística e instalación. En la ejecución pasan cosas distintas, y parte de eso nunca se registra."
+          subtitle="Al cotizar estimás, rubro por rubro, materiales, horas de mano de obra, horas de diseño y fletes. En la ejecución pasan cosas distintas, y parte de eso nunca se registra."
         />
         <div className="mt-14 grid gap-4 md:grid-cols-3">
           {PROBLEM_POINTS.map((p, i) => {

@@ -10,6 +10,7 @@ import type {
   AlertSettings,
   AppRole,
   Attachment,
+  BudgetCategory,
   BudgetLine,
   LeftoverDims,
   MaterialSource,
@@ -92,8 +93,9 @@ export interface BudgetLineInput {
   unit: string;
   unitCost: number;
   notes?: string;
+  rubro?: BudgetLine["rubro"];
+  hourRateId?: string;
   operatorId?: string;
-  laborRole?: string;
   hourType?: BudgetLine["hourType"];
   overtimeMultiplier?: number;
 }
@@ -425,6 +427,8 @@ export function registerUsage(
 
 export interface ActualInput {
   type: Exclude<ActualEntryType, "labor">;
+  /** Solo para "other": Administración y diseño o Gasto financiero. */
+  category?: Extract<BudgetCategory, "admin" | "financial">;
   description: string;
   date: string;
   supplier?: string;
@@ -433,7 +437,7 @@ export interface ActualInput {
   itemId?: string;
 }
 
-/** Costos monetarios que no son materiales ni horas (tercerizaciones, flete…). Sólo Gestión. */
+/** Costos monetarios que no son materiales ni horas (trabajo comprado hecho, montaje, fletes, gastos de administración o financieros…). Sólo Gestión. */
 export function addActual(project: Project, input: ActualInput, settings: AlertSettings, ctx: Ctx): Project {
   assertManager(ctx, "Cargar costos extra");
   assertExecutable(project, "costos de ejecución");
@@ -443,7 +447,7 @@ export function addActual(project: Project, input: ActualInput, settings: AlertS
     projectId: project.id,
     date: input.date,
     type: input.type,
-    category: ACTUAL_TYPE_TO_CATEGORY[input.type],
+    category: input.type === "other" && input.category ? input.category : ACTUAL_TYPE_TO_CATEGORY[input.type],
     description: input.description || ACTUAL_TYPE_LABELS[input.type],
     amount: input.amount,
     supplier: input.supplier,

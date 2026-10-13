@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { ArrowLeft, Clock, Cog, Hammer, Package, Truck, Wrench, Zap } from "lucide-react";
+import { ArrowLeft, Clock, Hammer, Landmark, Package, Truck, Wrench, Zap } from "lucide-react";
 import type { ActualEntryType, Project } from "@/types";
 import { ACTUAL_TYPE_LABELS } from "@/lib/constants";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -12,15 +12,15 @@ import { OtherCostForm } from "./other-cost-form";
 
 type Kind = "material" | Exclude<ActualEntryType, "finishing">;
 
-/** Una tarjeta por cada una de las siete categorías de costo. */
+/** Una tarjeta por tipo de registro; cubren las seis categorías de reporte. El uso de máquina va dentro de las horas. */
 const CARDS: Array<{ kind: Kind; label: string; icon: typeof Package }> = [
   { kind: "material", label: "Material utilizado", icon: Package },
-  { kind: "labor", label: "Horas trabajadas", icon: Clock },
-  { kind: "other", label: ACTUAL_TYPE_LABELS.other, icon: Cog },
-  { kind: "outsourcing", label: "Tercerización", icon: Hammer },
-  { kind: "logistics", label: "Logística", icon: Truck },
-  { kind: "installation", label: "Instalación", icon: Wrench },
-  { kind: "unexpected", label: "Imprevisto", icon: Zap },
+  { kind: "labor", label: ACTUAL_TYPE_LABELS.labor, icon: Clock },
+  { kind: "outsourcing", label: ACTUAL_TYPE_LABELS.outsourcing, icon: Hammer },
+  { kind: "installation", label: ACTUAL_TYPE_LABELS.installation, icon: Wrench },
+  { kind: "logistics", label: ACTUAL_TYPE_LABELS.logistics, icon: Truck },
+  { kind: "other", label: ACTUAL_TYPE_LABELS.other, icon: Landmark },
+  { kind: "unexpected", label: ACTUAL_TYPE_LABELS.unexpected, icon: Zap },
 ];
 
 export function RecordDialog({ project, open, onOpenChange }: { project: Project; open: boolean; onOpenChange: (o: boolean) => void }) {

@@ -1,10 +1,11 @@
 "use client";
 import { Plus, Trash2 } from "lucide-react";
-import type { BudgetCategory, BudgetLine } from "@/types";
+import type { BudgetCategory, BudgetLine, RubroId } from "@/types";
 import { CATEGORY_LABELS, CATEGORY_ORDER, MATERIAL_CATALOG } from "@/lib/constants";
 import { budgetLineTotal } from "@/lib/calculations";
 import { formatCurrency } from "@/lib/formatting";
 import { budgetLineSchema } from "@/lib/schemas";
+import { isRubroId, RUBROS } from "@/lib/rubros";
 import type { BudgetLineInput } from "@/lib/project-operations";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
@@ -14,6 +15,8 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 export interface DraftLine {
   key: string;
   category: BudgetCategory;
+  /** "" = sin rubro. */
+  rubro: RubroId | "";
   description: string;
   quantity: string;
   unit: string;
@@ -23,13 +26,14 @@ export interface DraftLine {
 let k = 0;
 function newDraftLine(category: BudgetCategory = "materials"): DraftLine {
   k += 1;
-  return { key: `d${Date.now()}${k}`, category, description: "", quantity: "", unit: category === "materials" ? "placa" : category === "labor" ? "h" : "global", unitCost: "" };
+  return { key: `d${Date.now()}${k}`, category, rubro: "", description: "", quantity: "", unit: category === "materials" ? "placa" : category === "labor" ? "h" : "global", unitCost: "" };
 }
 
 export function draftFromLine(l: BudgetLine): DraftLine {
   return {
     key: l.id,
     category: l.category,
+    rubro: l.rubro ?? "",
     description: l.description,
     quantity: l.quantity === null ? "" : String(l.quantity),
     unit: l.unit,
@@ -51,7 +55,7 @@ export function draftToInput(d: DraftLine): { input?: BudgetLineInput; error?: s
   };
   const parsed = budgetLineSchema.safeParse(candidate);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Revisá la fila" };
-  return { input: { ...candidate, category: d.category } };
+  return { input: { ...candidate, category: d.category, rubro: d.rubro || undefined } };
 }
 
 function draftTotal(d: DraftLine): number {
@@ -81,6 +85,7 @@ export function BudgetEditor({
       <Table>
         <THead>
           <TR>
+            <TH>Rubro</TH>
             <TH>Categoría</TH>
             <TH>Descripción</TH>
             <TH className="text-right">Cantidad</TH>
@@ -93,6 +98,15 @@ export function BudgetEditor({
         <TBody>
           {lines.map((l, i) => (
             <TR key={l.key} className="align-top">
+              <TD className="min-w-40">
+                <label className="sr-only" htmlFor={`rubro-${l.key}`}>Rubro fila {i + 1}</label>
+                <Select id={`rubro-${l.key}`} value={l.rubro} onChange={(e) => update(l.key, { rubro: isRubroId(e.target.value) ? e.target.value : "" })}>
+                  <option value="">Sin rubro</option>
+                  {RUBROS.map((r) => (
+                    <option key={r.id} value={r.id}>{r.label}</option>
+                  ))}
+                </Select>
+              </TD>
               <TD className="min-w-36">
                 <label className="sr-only" htmlFor={`cat-${l.key}`}>Categoría fila {i + 1}</label>
                 <Select id={`cat-${l.key}`} value={l.category} onChange={(e) => update(l.key, { category: e.target.value as BudgetCategory })}>

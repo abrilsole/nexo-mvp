@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { ActualEntryType, Project } from "@/types";
@@ -7,7 +8,7 @@ import { otherCostSchema, type OtherCostValues } from "@/lib/schemas";
 import { todayISO } from "@/lib/formatting";
 import { useAppStore } from "@/store/use-app-store";
 import { Field } from "@/components/ui/field";
-import { Input, Textarea } from "@/components/ui/input";
+import { Input, Select, Textarea } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
 
@@ -18,15 +19,33 @@ export function OtherCostForm({ project, type, onDone }: { project: Project; typ
     defaultValues: { supplier: "", description: "", date: todayISO(), notes: "" },
   });
   const e = formState.errors;
+  const [otherCategory, setOtherCategory] = useState<"admin" | "financial">("admin");
+  const category = type === "other" ? otherCategory : ACTUAL_TYPE_TO_CATEGORY[type];
   const submit = (v: OtherCostValues) => {
-    const res = addActualEntry(project.id, { type, description: v.description, amount: v.amount, supplier: v.supplier || undefined, date: v.date, notes: v.notes || undefined });
+    const res = addActualEntry(project.id, {
+      type,
+      category: type === "other" ? otherCategory : undefined,
+      description: v.description,
+      amount: v.amount,
+      supplier: v.supplier || undefined,
+      date: v.date,
+      notes: v.notes || undefined,
+    });
     if (!res.ok) return setError("root", { message: res.error });
     onDone();
   };
   return (
     <form onSubmit={handleSubmit(submit)} noValidate className="space-y-4">
+      {type === "other" && (
+        <Field label="Categoría" htmlFor="o-cat">
+          <Select id="o-cat" value={otherCategory} onChange={(ev) => setOtherCategory(ev.target.value === "financial" ? "financial" : "admin")}>
+            <option value="admin">{CATEGORY_LABELS.admin}</option>
+            <option value="financial">{CATEGORY_LABELS.financial}</option>
+          </Select>
+        </Field>
+      )}
       <p className="text-sm text-slate-500">
-        Se imputará en la categoría <strong>{CATEGORY_LABELS[ACTUAL_TYPE_TO_CATEGORY[type]]}</strong>.
+        Se imputará en la categoría <strong>{CATEGORY_LABELS[category]}</strong>.
       </p>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Descripción" htmlFor="o-desc" error={e.description?.message} className="col-span-2">
