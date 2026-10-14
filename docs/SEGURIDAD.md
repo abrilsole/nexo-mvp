@@ -53,6 +53,18 @@ Migración `20261013120000_lote4_rubros.sql` (aplicada el 13/10/2026, sin DROP):
   - La conversión no cambia importes, incluido el presupuesto base de proyectos cerrados.
 - El asesor de seguridad de Supabase no marca nada nuevo (siguen solo los dos avisos ya conocidos de abajo).
 
+## Lote 4b: Diseño y Administración
+
+Migración `20261014120000_lote4b_diseno_administracion.sql` (aplicada el 14/10/2026, sin DROP):
+
+- `hour_rates` suma la columna `kind` (labor / design / admin) y el tipo de hora Diseño. Las políticas no cambian: solo Gestión lee y escribe.
+- La columna vieja `category` queda en desuso; se explica en `docs/DECISIONES_RUBROS.md`.
+- Función `private.design_or_admin`: solo para la conversión de datos. No tiene permiso para usuarios de la app.
+- Tests en `tests/db/rls.test.ts` ("Lote 4b"):
+  - el mapeo de líneas, costos reales y presupuesto base, con los mismos totales antes y después;
+  - cada empresa tiene los tres tipos de hora;
+  - Taller no ve las tarifas de Diseño ni de Administración.
+
 ## Cómo verificarlo
 
 ### 1. Tests automáticos (sin tocar la base real)

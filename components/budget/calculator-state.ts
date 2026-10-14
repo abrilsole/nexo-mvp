@@ -6,7 +6,7 @@ import {
   analyzePrice,
   costGroups,
   financialLine,
-  rateFor,
+  ratesByCategory,
   rubroLabor,
   rubroLines,
   suggestedPrice,
@@ -16,13 +16,15 @@ import {
   type CostGroups,
   type PriceAnalysis,
   type QuoteInput,
+  type RatesByCategory,
   type RubroLabor,
   type SuggestedPrice,
   type WorkSchedule,
 } from "@/lib/budget-calculator";
 import { benchmarksForType, suggestedAdjustments, type CategoryBenchmark, type TypeBenchmarks } from "@/lib/historical-benchmarks";
 import type { BudgetLineInput } from "@/lib/project-operations";
-import { DEFAULT_FINANCIAL_PCT, MATERIAL_CATALOG } from "@/lib/constants";
+import { CATEGORY_LABELS, DEFAULT_FINANCIAL_PCT, HOUR_CATEGORIES, MATERIAL_CATALOG } from "@/lib/constants";
+import { formatCurrency, formatNumber, formatWorkingDays } from "@/lib/formatting";
 import { rubroDef } from "@/lib/rubros";
 import { parseDecimal } from "@/lib/schemas";
 
@@ -42,6 +44,7 @@ export interface RubroRow {
   materials: MaterialRow[];
   workers: string;
   hoursPerWorker: string;
+  designHours: string;
   adminHours: string;
   /** Solo rubros de importe (Transporte / Fletes, Imprevistos). */
   amount: string;
@@ -66,7 +69,7 @@ export const newMaterialRow = (): MaterialRow => ({ key: rowKey(), name: "", uni
 
 export function newRubroRow(rubro: RubroId): RubroRow {
   const full = rubroDef(rubro).kind === "full";
-  return { key: rowKey(), rubro, materials: full ? [newMaterialRow()] : [], workers: full ? "1" : "", hoursPerWorker: "", adminHours: "", amount: "" };
+  return { key: rowKey(), rubro, materials: full ? [newMaterialRow()] : [], workers: full ? "1" : "", hoursPerWorker: "", designHours: "", adminHours: "", amount: "" };
 }
 
 export function initialCalcState(financialPct = DEFAULT_FINANCIAL_PCT): CalcState {
@@ -79,6 +82,8 @@ export function initialCalcState(financialPct = DEFAULT_FINANCIAL_PCT): CalcStat
     appliedAdjustments: [],
   };
 }
+
+const round2 = (v: number) => Math.round(v * 100) / 100;
 
 const n = (s: string) => {
   const v = parseDecimal(s);
@@ -110,6 +115,7 @@ function calcStateToInput(s: CalcState, startDate: string, ctx: Pick<CalculatorC
       })),
       workers: Math.round(n(r.workers)),
       hoursPerWorker: n(r.hoursPerWorker),
+      designHours: n(r.designHours),
       adminHours: n(r.adminHours),
       amount: n(r.amount),
     })),
@@ -147,6 +153,8 @@ export interface CalculatorResult {
   input: QuoteInput;
   rubros: RubroResult[];
   schedule: WorkSchedule;
+  /** Horas extra de mano de obra de todos los rubros (0 si los días de trabajo entran). */
+  overtimeHours: number;
   /** Todas las líneas del costo presupuestado (rubros + ajustes + gasto financiero). */
   lines: BudgetLineInput[];
   total: number;
@@ -155,7 +163,7 @@ export interface CalculatorResult {
   /** Rentabilidad con el precio elegido (null sin precio). */
   atPrice: PriceAnalysis | null;
   /** Tarifas usadas (undefined = no hay tipo de hora de esa categoría). */
-  rates: { labor?: HourRate; admin?: HourRate };
+  rates: RatesByCategory;
   benchmarks: TypeBenchmarks;
   suggestions: CategoryBenchmark[];
   hasContent: boolean;
@@ -164,7 +172,7 @@ export interface CalculatorResult {
 /** Todo lo derivado de la cotización en un solo lugar (el Cotizador y Nuevo proyecto usan el mismo resultado). */
 export function computeCalculator(state: CalcState, startDate: string, projectType: string, ctx: CalculatorContext): CalculatorResult {
   const input = calcStateToInput(state, startDate, ctx);
-  const rates = { labor: rateFor(ctx.rates, "labor"), admin: rateFor(ctx.rates, "admin") };
+  const rates = ratesByCategory(ctx.rates);
   const schedule = workSchedule(input.rubros, input.hoursPerDay, startDate, input.deadline);
   const rubros = input.rubros.map((r, i): RubroResult => {
     const labor =
@@ -172,6 +180,7 @@ export function computeCalculator(state: CalcState, startDate: string, projectTy
         ? rubroLabor(r, {
             normalShare: schedule.normalShare,
             laborRate: rates.labor?.hourlyRate ?? 0,
+            designRate: rates.design?.hourlyRate ?? 0,
             adminRate: rates.admin?.hourlyRate ?? 0,
             overtimeMultiplier: input.overtimeMultiplier,
           })
@@ -190,6 +199,7 @@ export function computeCalculator(state: CalcState, startDate: string, projectTy
     input,
     rubros,
     schedule,
+    overtimeHours: round2(rubros.reduce((s, r) => s + (r.labor?.overtimeHours ?? 0), 0)),
     lines,
     total: totalOfLines(lines),
     costs,
@@ -200,4 +210,29 @@ export function computeCalculator(state: CalcState, startDate: string, projectTy
     suggestions,
     hasContent: withAdjustments.length > 0,
   };
+}
+
+/** "Mano de obra $ 19.000/h · Diseño $ 27.000/h · Administración $ 27.000/h": las tarifas que usa la cotización. */
+export function ratesText(rates: RatesByCategory): string {
+  return HOUR_CATEGORIES.map((c) => `${rates[c]?.name ?? CATEGORY_LABELS[c]} ${formatCurrency(rates[c]?.hourlyRate ?? 0)}/h`).join(" · ");
+}
+
+/** Avisos del paso de revisión, en un solo lugar. */
+export function reviewWarnings(calc: CalculatorResult, salesPrice: number): string[] {
+  const out: string[] = [];
+  const { schedule, suggested, rates } = calc;
+  if (!calc.hasContent) out.push("Falta cargar el costo: no hay materiales, horas ni importes.");
+  if (!(salesPrice > 0)) out.push("Falta el precio de venta.");
+  const missingRates = HOUR_CATEGORIES.filter((c) => !rates[c]?.hourlyRate);
+  if (missingRates.length > 0) out.push("Falta la tarifa de algún tipo de hora: cargala en Configuración para que esas horas sumen al costo.");
+  if (schedule.fits === false) {
+    out.push(
+      `Los días de trabajo estimados (${formatWorkingDays(schedule.workDays)}) no entran hasta la fecha de entrega (${formatWorkingDays(schedule.availableDays ?? 0)} hábiles): ` +
+        `${formatNumber(calc.overtimeHours, 1)} h se calculan como horas extra.`,
+    );
+  }
+  if (salesPrice > 0 && suggested && salesPrice !== suggested.price) {
+    out.push(`El precio fue escrito a mano (el sugerido es ${formatCurrency(suggested.price)}): el desglose de rentabilidad por materiales y mano de obra solo aplica al precio sugerido.`);
+  }
+  return out;
 }

@@ -1,30 +1,29 @@
 "use client";
-import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import type { ActualEntryType, Project } from "@/types";
-import { ACTUAL_TYPE_TO_CATEGORY, CATEGORY_LABELS } from "@/lib/constants";
+import type { Project } from "@/types";
+import { CATEGORY_LABELS } from "@/lib/constants";
+import { actualInputCategory, type ActualInput } from "@/lib/project-operations";
 import { otherCostSchema, type OtherCostValues } from "@/lib/schemas";
 import { todayISO } from "@/lib/formatting";
 import { useAppStore } from "@/store/use-app-store";
 import { Field } from "@/components/ui/field";
-import { Input, Select, Textarea } from "@/components/ui/input";
+import { Input, Textarea } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
 
-export function OtherCostForm({ project, type, onDone }: { project: Project; type: Exclude<ActualEntryType, "labor">; onDone: () => void }) {
+/** Costo real que no es material ni horas. `cost` dice el tipo y, para Diseño / Administración / Gasto financiero, la categoría. */
+export function OtherCostForm({ project, cost, onDone }: { project: Project; cost: Pick<ActualInput, "type" | "category">; onDone: () => void }) {
   const addActualEntry = useAppStore((s) => s.addActualEntry);
   const { register, handleSubmit, setError, formState } = useForm<OtherCostValues>({
     resolver: zodResolver(otherCostSchema),
     defaultValues: { supplier: "", description: "", date: todayISO(), notes: "" },
   });
   const e = formState.errors;
-  const [otherCategory, setOtherCategory] = useState<"admin" | "financial">("admin");
-  const category = type === "other" ? otherCategory : ACTUAL_TYPE_TO_CATEGORY[type];
+  const category = actualInputCategory(cost);
   const submit = (v: OtherCostValues) => {
     const res = addActualEntry(project.id, {
-      type,
-      category: type === "other" ? otherCategory : undefined,
+      ...cost,
       description: v.description,
       amount: v.amount,
       supplier: v.supplier || undefined,
@@ -36,14 +35,6 @@ export function OtherCostForm({ project, type, onDone }: { project: Project; typ
   };
   return (
     <form onSubmit={handleSubmit(submit)} noValidate className="space-y-4">
-      {type === "other" && (
-        <Field label="Categoría" htmlFor="o-cat">
-          <Select id="o-cat" value={otherCategory} onChange={(ev) => setOtherCategory(ev.target.value === "financial" ? "financial" : "admin")}>
-            <option value="admin">{CATEGORY_LABELS.admin}</option>
-            <option value="financial">{CATEGORY_LABELS.financial}</option>
-          </Select>
-        </Field>
-      )}
       <p className="text-sm text-slate-500">
         Se imputará en la categoría <strong>{CATEGORY_LABELS[category]}</strong>.
       </p>

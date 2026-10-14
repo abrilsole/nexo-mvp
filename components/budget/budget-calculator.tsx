@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Plus, TriangleAlert } from "lucide-react";
 import type { BudgetCategory, RubroId } from "@/types";
-import { CATEGORY_LABELS, CATEGORY_ORDER, MATERIAL_CATALOG, MIN_COMPARABLE_PROJECTS } from "@/lib/constants";
+import { CATEGORY_LABELS, CATEGORY_ORDER, HOUR_CATEGORIES, MATERIAL_CATALOG, MIN_COMPARABLE_PROJECTS } from "@/lib/constants";
 import { averageDailyLaborCost, delayAnalysis, showDelayChart, totalOfLines } from "@/lib/budget-calculator";
 import { formatCurrency, formatDate, formatNumber, formatPercent, formatWorkingDays } from "@/lib/formatting";
 import { RUBROS } from "@/lib/rubros";
@@ -13,7 +13,7 @@ import { Input, Select } from "@/components/ui/input";
 import { DelayChart } from "@/components/charts/delay-chart";
 import { NumField } from "./fields";
 import { RubroSection } from "./rubro-section";
-import { newRubroRow, type CalcState, type CalculatorResult, type RubroRow } from "./calculator-state";
+import { newRubroRow, ratesText, type CalcState, type CalculatorResult, type RubroRow } from "./calculator-state";
 
 interface Props {
   state: CalcState;
@@ -60,13 +60,12 @@ export function BudgetCalculator({ state, onState, result, projectType, salesPri
     if (v > 0) byCat.set(c, v);
   }
   const usesSuggestedPrice = suggested !== null && salesPrice === suggested.price;
-  const overtimeHours = result.rubros.reduce((s, r) => s + (r.labor?.overtimeHours ?? 0), 0);
   const daily = averageDailyLaborCost(
     result.rubros.flatMap((r) => (r.labor ? [r.labor] : [])),
     schedule.neededDays,
   );
   const delay = delayAnalysis({ baseCost: result.total, salesPrice, dailyCost: daily, targetMarginPct: suggested?.totalMargin ?? 0 });
-  const missingRate = !rates.labor?.hourlyRate || !rates.admin?.hourlyRate;
+  const missingRate = HOUR_CATEGORIES.some((c) => !rates[c]?.hourlyRate);
 
   const toggleAdjustment = (c: BudgetCategory) =>
     set({ appliedAdjustments: state.appliedAdjustments.includes(c) ? state.appliedAdjustments.filter((x) => x !== c) : [...state.appliedAdjustments, c] });
@@ -80,10 +79,9 @@ export function BudgetCalculator({ state, onState, result, projectType, salesPri
       </datalist>
 
       <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600">
-        La cotización se arma por rubros. Cada rubro tiene materiales, operarios × horas por operario y horas administrativas / diseño (Transporte / Fletes e
-        Imprevistos son solo un importe). Las horas se valorizan con la tarifa de cada tipo de hora de{" "}
-        <Link href="/settings" className="underline">Configuración</Link>: Mano de obra {formatCurrency(rates.labor?.hourlyRate ?? 0)}/h y Administrativa / diseño{" "}
-        {formatCurrency(rates.admin?.hourlyRate ?? 0)}/h. La tarifa vigente queda guardada en la cotización.
+        La cotización se arma por rubros. Cada rubro tiene materiales, operarios × horas por operario, horas de diseño y horas de administración
+        (Transporte / Fletes e Imprevistos son solo un importe). Las horas se valorizan con la tarifa de cada tipo de hora de{" "}
+        <Link href="/settings" className="underline">Configuración</Link>: {ratesText(rates)}. La tarifa vigente queda guardada en la cotización.
       </div>
       {missingRate && <Warning>Falta la tarifa de algún tipo de hora: cargala en Configuración para que las horas sumen al costo.</Warning>}
 
@@ -146,7 +144,7 @@ export function BudgetCalculator({ state, onState, result, projectType, salesPri
             <Warning>
               Los días de trabajo estimados ({formatWorkingDays(schedule.workDays)}) no entran hasta la fecha de entrega ({formatWorkingDays(schedule.availableDays ?? 0)} hábiles).
               {" "}El {formatPercent((1 - schedule.normalShare) * 100, 0)} de las horas de cada rubro se calcula como horas extra
-              {overtimeHours > 0 ? ` (${formatNumber(overtimeHours, 1)} h en total)` : ""}, con la tarifa × {formatNumber(input.overtimeMultiplier, 2)}.
+              {result.overtimeHours > 0 ? ` (${formatNumber(result.overtimeHours, 1)} h en total)` : ""}, con la tarifa × {formatNumber(input.overtimeMultiplier, 2)}.
             </Warning>
           </div>
         )}
@@ -216,7 +214,7 @@ export function BudgetCalculator({ state, onState, result, projectType, salesPri
               <NumField id="c-fin" label="Gasto financiero" suffix="%" value={state.financialPct} onChange={(v) => set({ financialPct: v })} />
             </div>
             <p className="text-xs text-slate-500">
-              Rentabilidad = ganancia sobre el precio de venta. La de mano de obra incluye las horas administrativas. Los dos objetivos separados y el gasto
+              Rentabilidad = ganancia sobre el precio de venta. La de mano de obra incluye diseño y administración. Los dos objetivos separados y el gasto
               financiero ({formatNumber(input.financialPct, 2)}% del precio) son supuestos a confirmar con el cliente.
             </p>
 

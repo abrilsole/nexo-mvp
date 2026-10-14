@@ -5,6 +5,7 @@ import type {
   BudgetCategory,
   CatalogMaterial,
   EconomicHealth,
+  HourCategory,
   HourRate,
   MaterialSource,
   ProjectStatus,
@@ -43,10 +44,14 @@ export const DEFAULT_OVERTIME_MULTIPLIER = 2;
 /** Gasto financiero por defecto: % sobre el precio de venta. A confirmar con el cliente. */
 export const DEFAULT_FINANCIAL_PCT = 5;
 
+/** Categorías que tienen horas, en el orden en que se muestran. */
+export const HOUR_CATEGORIES: HourCategory[] = ["labor", "design", "admin"];
+
 /** Tipos de hora y tarifas iniciales (las que usa el cliente piloto; se cambian en Configuración). */
 export const DEFAULT_HOUR_RATES: HourRate[] = [
   { id: "labor", name: "Mano de obra", hourlyRate: 19_000, category: "labor" },
-  { id: "admin", name: "Administrativa / diseño", hourlyRate: 27_000, category: "admin" },
+  { id: "design", name: "Diseño", hourlyRate: 27_000, category: "design" },
+  { id: "admin", name: "Administración", hourlyRate: 27_000, category: "admin" },
 ];
 
 export const ACTIVE_STATUSES: ProjectStatus[] = ["approved", "purchasing", "production", "installation"];
@@ -55,12 +60,13 @@ export const ACTIVE_STATUSES: ProjectStatus[] = ["approved", "purchasing", "prod
 export const BUDGET_EDITABLE_STATUSES: ProjectStatus[] = ["quotation", "approved"];
 
 /** Categorías de reporte, siempre en este orden y con estos nombres. Se derivan de los rubros (lib/rubros.ts). */
-export const CATEGORY_ORDER: BudgetCategory[] = ["materials", "labor", "admin", "transport", "financial", "contingency"];
+export const CATEGORY_ORDER: BudgetCategory[] = ["materials", "labor", "design", "admin", "transport", "financial", "contingency"];
 
 export const CATEGORY_LABELS: Record<BudgetCategory, string> = {
   materials: "Materiales",
   labor: "Mano de obra",
-  admin: "Administración y diseño",
+  design: "Diseño",
+  admin: "Administración",
   transport: "Transporte y fletes",
   financial: "Gasto financiero",
   contingency: "Imprevistos",
@@ -70,6 +76,7 @@ export const CATEGORY_LABELS: Record<BudgetCategory, string> = {
 export const CATEGORY_IS_PLURAL: Record<BudgetCategory, boolean> = {
   materials: true,
   labor: false,
+  design: false,
   admin: false,
   transport: false,
   financial: false,
@@ -110,10 +117,10 @@ export const ACTUAL_TYPE_LABELS: Record<ActualEntryType, string> = {
   logistics: "Transporte y fletes",
   installation: "Montaje e instalación",
   unexpected: "Imprevisto",
-  other: "Gasto de administración o financiero",
+  other: "Diseño, administración o gasto financiero",
 };
 
-/** Categoría por defecto de cada tipo. "other" elige entre Administración y diseño y Gasto financiero al registrar. */
+/** Categoría por defecto de cada tipo. "other" se registra con su categoría: Diseño, Administración o Gasto financiero. */
 export const ACTUAL_TYPE_TO_CATEGORY: Record<ActualEntryType, BudgetCategory> = {
   labor: "labor",
   outsourcing: "materials",
@@ -124,9 +131,17 @@ export const ACTUAL_TYPE_TO_CATEGORY: Record<ActualEntryType, BudgetCategory> = 
   other: "admin",
 };
 
+/** Costos reales de tipo "other" que se registran hoy: cada uno con su categoría. */
+export const OTHER_COST_CATEGORIES = ["design", "admin", "financial"] as const;
+export type OtherCostCategory = (typeof OTHER_COST_CATEGORIES)[number];
+
+export function isOtherCostCategory(c: BudgetCategory): c is OtherCostCategory {
+  return (OTHER_COST_CATEGORIES as readonly BudgetCategory[]).includes(c);
+}
+
 /** Etiqueta de un costo real ya registrado: los "other" viejos eran uso de máquinas. */
 export function actualEntryLabel(e: { type: ActualEntryType; category: BudgetCategory }): string {
-  if (e.type === "other" && e.category !== "admin" && e.category !== "financial") return "Uso de máquinas (registro anterior)";
+  if (e.type === "other") return isOtherCostCategory(e.category) ? CATEGORY_LABELS[e.category] : "Uso de máquinas (registro anterior)";
   return ACTUAL_TYPE_LABELS[e.type];
 }
 

@@ -19,7 +19,7 @@ function MarginVisual() {
   const rows = [
     { label: "Materiales", budget: 62, real: 74, over: true },
     { label: "Mano de obra", budget: 48, real: 45 },
-    { label: "Administración y diseño", budget: 30, real: 30 },
+    { label: "Diseño", budget: 30, real: 30 },
     { label: "Transporte y fletes", budget: 22, real: 14 },
   ];
   return (

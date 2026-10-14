@@ -2,7 +2,7 @@
 // Traducción entre el modelo de dominio (types/) y las filas de Supabase.
 // El dominio no conoce la base: todo el snake_case vive acá.
 // ─────────────────────────────────────────────────────────────
-import { DEFAULT_FINANCIAL_PCT, DEFAULT_OVERTIME_MULTIPLIER, normalizeCategory } from "@/lib/constants";
+import { DEFAULT_FINANCIAL_PCT, DEFAULT_OVERTIME_MULTIPLIER, HOUR_CATEGORIES, normalizeCategory } from "@/lib/constants";
 import { isRubroId } from "@/lib/rubros";
 import type {
   ActivityEvent,
@@ -25,6 +25,8 @@ import type {
 } from "@/types";
 
 type Row = Record<string, unknown>;
+
+const isHourCategory = (v: unknown): v is HourRate["category"] => typeof v === "string" && (HOUR_CATEGORIES as string[]).includes(v);
 
 /** La línea base se guarda como JSON: sus líneas también pasan por la normalización de categorías. */
 function baselineFromJson(b: Project["baseline"] | null): Project["baseline"] {
@@ -614,10 +616,11 @@ export function hourRateFromRow(r: Row): HourRate {
     id: String(r.id),
     name: String(r.name),
     hourlyRate: num(r.hourly_rate),
-    category: r.category === "admin" ? "admin" : "labor",
+    category: isHourCategory(r.kind) ? r.kind : "labor",
   };
 }
 
+/** La categoría va en `kind` (Lote 4b). La columna vieja `category` quedó en desuso: no se escribe. */
 export function hourRateToRow(org: string, h: HourRate, position: number): Row {
-  return { organization_id: org, id: h.id, name: h.name, hourly_rate: h.hourlyRate, category: h.category, position, updated_at: new Date().toISOString() };
+  return { organization_id: org, id: h.id, name: h.name, hourly_rate: h.hourlyRate, kind: h.category, position, updated_at: new Date().toISOString() };
 }

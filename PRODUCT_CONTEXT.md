@@ -143,12 +143,12 @@ Rentabilidad = ganancia sobre el precio de venta: (precio de venta − costo) / 
 | Puntos de rentabilidad | Diferencia entre dos rentabilidades (nunca "%" ni "pp"). |
 | Comprado ≠ Consumido ≠ Desperdicio ≠ Sobrante | Siempre se muestran por separado. Solo consumido + desperdicio es costo. |
 
-Desde el Lote 4 la cotización se arma por **rubros** (Carpintería madera, Carpintería metálica, Plásticos, Vidrios, Instalación eléctrica, Pintura / Laqueados, Herrajes, Gráficas, Insumos, Transporte / Fletes, Embalaje, Montaje, Imprevistos) y se reporta en seis **categorías**, iguales en todas las pantallas: **Materiales, Mano de obra, Administración y diseño, Transporte y fletes, Gasto financiero, Imprevistos.** El uso de máquina está incluido en la mano de obra. El mapeo de las siete categorías anteriores y los supuestos a confirmar con el cliente están en `docs/DECISIONES_RUBROS.md`.
+Desde el Lote 4 la cotización se arma por **rubros** (Carpintería madera, Carpintería metálica, Plásticos, Vidrios, Instalación eléctrica, Pintura / Laqueados, Herrajes, Gráficas, Insumos, Transporte / Fletes, Embalaje, Montaje, Imprevistos) y se reporta en siete **categorías**, iguales en todas las pantallas: **Materiales, Mano de obra, Diseño, Administración, Transporte y fletes, Gasto financiero, Imprevistos.** El uso de máquina está incluido en la mano de obra. El mapeo de las siete categorías anteriores y los supuestos a confirmar con el cliente están en `docs/DECISIONES_RUBROS.md`.
 
 | Término | Significado |
 |---|---|
 | Rubro | Sector de la cotización. Cada línea del costo presupuestado guarda su rubro. |
-| Tipo de hora / tarifa | Mano de obra o Administrativa / diseño, con su tarifa por hora (Configuración). Cada cotización guarda la tarifa vigente. |
+| Tipo de hora / tarifa | Mano de obra, Diseño o Administración, cada uno con su tarifa por hora (Configuración). Cada cotización guarda la tarifa vigente. |
 | Días de trabajo estimados | Horas por operario / jornada, sumando los rubros uno detrás de otro (supuesto conservador, a confirmar). |
 | Fecha de entrega comprometida | La que se le promete al cliente. Si los días de trabajo no entran, la diferencia se calcula como horas extra. |
 | Gasto financiero | % sobre el precio de venta. Es un costo, no un rubro. |

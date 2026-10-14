@@ -17,7 +17,7 @@ export type ProjectStatus =
  * Categorías de reporte (Lote 4). Se derivan de los rubros de la cotización y son las mismas en todas las pantallas.
  * Las siete anteriores se normalizan al leer (ver normalizeCategory).
  */
-export type BudgetCategory = "materials" | "labor" | "admin" | "transport" | "financial" | "contingency";
+export type BudgetCategory = "materials" | "labor" | "design" | "admin" | "transport" | "financial" | "contingency";
 
 /** Rubros (sectores) del catálogo cerrado de la cotización. */
 export type RubroId =
@@ -97,6 +97,9 @@ export interface CostSettings {
   financialPct: number;
 }
 
+/** Categorías de reporte que pueden tener horas. */
+export type HourCategory = Extract<BudgetCategory, "labor" | "design" | "admin">;
+
 /**
  * Tipo de hora con su tarifa (Configuración). Es una lista: se pueden sumar tipos sin cambiar el modelo.
  * `category` dice en qué categoría de reporte caen sus horas.
@@ -105,7 +108,7 @@ export interface HourRate {
   id: string;
   name: string;
   hourlyRate: number;
-  category: Extract<BudgetCategory, "labor" | "admin">;
+  category: HourCategory;
 }
 
 export interface PurchaseEntry {

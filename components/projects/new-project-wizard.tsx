@@ -4,9 +4,9 @@ import { useRouter } from "next/navigation";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Check } from "lucide-react";
-import { CATEGORY_LABELS, CATEGORY_ORDER, PROJECT_TYPES } from "@/lib/constants";
+import { PROJECT_TYPES } from "@/lib/constants";
 import { projectInfoSchema, type ProjectInfoValues } from "@/lib/schemas";
-import { formatCurrency, formatCurrencyOrDash, formatDate, formatPercent, todayISO, toISODate } from "@/lib/formatting";
+import { formatCurrency, formatCurrencyOrDash, formatPercent, todayISO, toISODate } from "@/lib/formatting";
 import { marginPercent, profitOrNull } from "@/lib/calculations";
 import { nextProjectCode, type BudgetLineInput } from "@/lib/project-operations";
 import { useAppStore } from "@/store/use-app-store";
@@ -17,8 +17,8 @@ import { Input, Select, Textarea } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { BudgetCalculator } from "@/components/budget/budget-calculator";
 import { computeCalculator, initialCalcState, type CalcState } from "@/components/budget/calculator-state";
-import { totalOfLines } from "@/lib/budget-calculator";
 import { clearQuoteDraft, peekQuoteDraft } from "@/components/budget/quote-draft";
+import { QuoteReview } from "./quote-review";
 import { cn } from "@/lib/utils";
 
 const STEPS = ["Datos del proyecto", "Costo presupuestado", "Revisar y crear"];
@@ -103,11 +103,6 @@ export function NewProjectWizard() {
     router.push(`/projects/${res.value}`);
   };
 
-  const byCat = CATEGORY_ORDER.map((c) => ({
-    c,
-    total: totalOfLines(calc.lines.filter((l) => l.category === c)),
-  })).filter((x) => x.total > 0);
-
   return (
     <div>
       <PageHeader back="/projects" title="Nuevo proyecto" subtitle={`Código asignado: ${code}. El costo presupuestado que cargues, una vez aprobado, será el presupuesto base contra el que se miden los desvíos.`} />
@@ -127,7 +122,7 @@ export function NewProjectWizard() {
         ))}
       </ol>
 
-      <div className={cn("grid gap-6", step > 0 && "lg:grid-cols-[1fr_300px]")}>
+      <div className={cn("grid gap-6", step === 1 && "lg:grid-cols-[1fr_300px]")}>
         <div>
           {step === 0 && (
             <Card>
@@ -169,7 +164,7 @@ export function NewProjectWizard() {
                 <CardHeader>
                   <CardTitle>Costo presupuestado</CardTitle>
                   <p className="text-sm text-slate-500">
-                    Armalo por rubros: materiales, operarios × horas y horas administrativas / diseño de cada rubro, más transporte e imprevistos. Te sugiere un precio de venta y, una vez aprobado, es el presupuesto base contra el que se miden los desvíos.
+                    Armalo por rubros: materiales, operarios × horas, horas de diseño y de administración de cada rubro, más transporte e imprevistos. Te sugiere un precio de venta y, una vez aprobado, es el presupuesto base contra el que se miden los desvíos.
                   </p>
                 </CardHeader>
               </Card>
@@ -190,28 +185,14 @@ export function NewProjectWizard() {
             </div>
           )}
           {step === 2 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>{getValues("name")}</CardTitle>
-                <p className="text-sm text-slate-500">
-                  {code} · {getValues("client")} · {getValues("projectType")} · entrega {formatDate(getValues("dueDate"))}
-                </p>
-              </CardHeader>
-              <CardContent>
-                <dl className="divide-y divide-slate-100 text-sm">
-                  {byCat.map(({ c, total }) => (
-                    <div key={c} className="flex justify-between py-2">
-                      <dt className="text-slate-600">{CATEGORY_LABELS[c]}</dt>
-                      <dd className="tabular font-medium">{formatCurrency(total)}</dd>
-                    </div>
-                  ))}
-                </dl>
-                <p className="mt-4 rounded-md bg-blue-50 p-3 text-sm text-blue-900">
-                  El proyecto se crea en la etapa <strong>Cotización</strong>. Podés editar el costo presupuestado hasta que pase a Compras.
-                </p>
-                {formError && <p role="alert" className="mt-3 text-sm text-red-600">{formError}</p>}
-              </CardContent>
-            </Card>
+            <div className="space-y-3">
+              <QuoteReview
+                info={{ ...getValues(), code }}
+                calc={calc}
+                salesPrice={salesPrice}
+              />
+              {formError && <p role="alert" className="text-sm text-red-600">{formError}</p>}
+            </div>
           )}
           <div className="mt-4 flex justify-between">
             <Button variant="outline" onClick={() => (step === 0 ? (clearQuoteDraft(), router.push("/projects")) : setStep(step - 1))}>
@@ -221,7 +202,8 @@ export function NewProjectWizard() {
           </div>
         </div>
 
-        {step > 0 && <aside className="lg:sticky lg:top-20 lg:self-start" aria-label="Resumen económico">
+        {/* En "Revisar y crear" el resultado ya está en el resumen: no se repite al costado. */}
+        {step === 1 && <aside className="lg:sticky lg:top-20 lg:self-start" aria-label="Resumen económico">
           <Card>
             <CardContent className="space-y-3 pt-5 text-sm">
               <Row label="Precio de venta" value={salesPrice > 0 ? formatCurrency(salesPrice) : "Sin definir"} />

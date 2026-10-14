@@ -36,7 +36,9 @@ describe("costos reales con las categorías nuevas", () => {
     expect(ACTUAL_TYPE_TO_CATEGORY).toMatchObject({ outsourcing: "materials", installation: "labor", logistics: "transport", unexpected: "contingency" });
   });
 
-  it("un gasto de administración o financiero se imputa en la categoría elegida", () => {
+  it("diseño, administración y gasto financiero se imputan cada uno en su categoría", () => {
+    const design = ops.addActual(p, { type: "other", category: "design", description: "Planos", amount: 80, date: "2026-01-09" }, DEFAULT_SETTINGS, ctx);
+    expect(design.actualEntries.at(-1)?.category).toBe("design");
     const admin = ops.addActual(p, { type: "other", category: "admin", description: "Diseño de planos", amount: 100, date: "2026-01-09" }, DEFAULT_SETTINGS, ctx);
     expect(admin.actualEntries.at(-1)?.category).toBe("admin");
     const fin = ops.addActual(p, { type: "other", category: "financial", description: "Comisión bancaria", amount: 50, date: "2026-01-09" }, DEFAULT_SETTINGS, ctx);
@@ -45,7 +47,9 @@ describe("costos reales con las categorías nuevas", () => {
 
   it("un registro viejo de máquinas se sigue leyendo como tal", () => {
     expect(actualEntryLabel({ type: "other", category: "labor" })).toBe("Uso de máquinas (registro anterior)");
-    expect(actualEntryLabel({ type: "other", category: "admin" })).toBe("Gasto de administración o financiero");
+    expect(actualEntryLabel({ type: "other", category: "admin" })).toBe("Administración");
+    expect(actualEntryLabel({ type: "other", category: "design" })).toBe("Diseño");
+    expect(actualEntryLabel({ type: "other", category: "financial" })).toBe("Gasto financiero");
   });
 });
 
@@ -63,9 +67,11 @@ describe("datos demo", () => {
 
 describe("tarifas y gasto financiero en la base", () => {
   it("tipo de hora: dominio → fila → dominio", () => {
-    const rate = { id: "admin", name: "Administrativa / diseño", hourlyRate: 27_000, category: "admin" as const };
+    const rate = { id: "design", name: "Diseño", hourlyRate: 27_000, category: "design" as const };
     const row = hourRateToRow("org", rate, 1);
-    expect(row).toMatchObject({ organization_id: "org", id: "admin", hourly_rate: 27_000, category: "admin", position: 1 });
+    expect(row).toMatchObject({ organization_id: "org", id: "design", hourly_rate: 27_000, kind: "design", position: 1 });
+    // La columna vieja `category` quedó en desuso: no se escribe.
+    expect(row).not.toHaveProperty("category");
     expect(hourRateFromRow({ ...row, hourly_rate: "27000" })).toEqual(rate);
   });
   it("sin valores válidos se usan los de por defecto", () => {

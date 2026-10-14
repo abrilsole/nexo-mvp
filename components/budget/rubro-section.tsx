@@ -1,9 +1,9 @@
 "use client";
-// Un rubro de la cotización: materiales, operarios × horas por operario y horas administrativas / diseño
+// Un rubro de la cotización: materiales, operarios × horas por operario, horas de diseño y de administración
 // (o solo un importe en Transporte / Fletes e Imprevistos). El desglose muestra de dónde sale cada importe.
 import { Plus } from "lucide-react";
 import { MATERIAL_CATALOG } from "@/lib/constants";
-import { materialBudgetQuantity } from "@/lib/budget-calculator";
+import { materialBudgetQuantity, type HourCharge } from "@/lib/budget-calculator";
 import { formatCurrency, formatNumber } from "@/lib/formatting";
 import { rubroDef } from "@/lib/rubros";
 import { parseDecimal } from "@/lib/schemas";
@@ -110,19 +110,27 @@ export function RubroSection({
             )}
           </div>
 
-          <div>
-            <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Horas administrativas / diseño</h4>
-            <div className="max-w-[12rem]">
-              <NumField id={`adm-${row.key}`} label="Horas totales" suffix="h" value={row.adminHours} onChange={(v) => onChange({ adminHours: v })} />
-            </div>
-            {labor && labor.adminHours > 0 && (
-              <p className="mt-1 text-xs text-slate-600 tabular">
-                {h(labor.adminHours)} × {formatCurrency(labor.adminRate)} = {formatCurrency(labor.adminCost)}
-              </p>
-            )}
+          <div className="grid max-w-md grid-cols-2 gap-2">
+            <FlatHours id={`dis-${row.key}`} title="Diseño" value={row.designHours} charge={labor?.design} onChange={(v) => onChange({ designHours: v })} />
+            <FlatHours id={`adm-${row.key}`} title="Administración" value={row.adminHours} charge={labor?.admin} onChange={(v) => onChange({ adminHours: v })} />
           </div>
         </div>
       )}
     </section>
+  );
+}
+
+/** Horas de diseño o de administración: horas totales × su tarifa (sin horas extra). */
+function FlatHours({ id, title, value, charge, onChange }: { id: string; title: string; value: string; charge: HourCharge | undefined; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h4>
+      <NumField id={id} label={`Horas de ${title.toLowerCase()}`} suffix="h" value={value} onChange={onChange} />
+      {charge && charge.hours > 0 && (
+        <p className="mt-1 text-xs text-slate-600 tabular">
+          {h(charge.hours)} × {formatCurrency(charge.rate)} = {formatCurrency(charge.cost)}
+        </p>
+      )}
+    </div>
   );
 }

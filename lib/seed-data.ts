@@ -20,7 +20,8 @@ import type {
   ReusableMaterial,
   StageLog,
 } from "@/types";
-import { ACTUAL_TYPE_LABELS, ACTUAL_TYPE_TO_CATEGORY, DEMO_USERS, MATERIAL_CATALOG, STATUS_LABELS, STATUS_ORDER } from "./constants";
+import { ACTUAL_TYPE_LABELS, DEMO_USERS, MATERIAL_CATALOG, STATUS_LABELS, STATUS_ORDER, type OtherCostCategory } from "./constants";
+import { actualInputCategory } from "./project-operations";
 import { budgetLineTotal } from "./calculations";
 import { toISODate } from "./formatting";
 import { activityTimeline, actualMessage, leftoverMessage, purchaseMessage, usageMessage } from "./activity";
@@ -34,6 +35,8 @@ const PLANTA = DEMO_USERS.workshop.name;
 interface BudgetSpec {
   materials: Array<[materialId: string, qty: number, unitCost: number]>;
   labor?: [hours: number, rate: number];
+  /** Horas de diseño y de administración del rubro Carpintería madera: [horas, tarifa]. */
+  hours?: Partial<Record<"design" | "admin", [hours: number, rate: number]>>;
   /** Importes globales por rubro (como los cargaría el Cotizador). */
   direct?: Partial<Record<keyof typeof DIRECT_LINES, number>>;
 }
@@ -50,7 +53,15 @@ type UsageSpec = [
 ];
 type PurchaseSpec = [dayOffset: number, materialId: string, qty: number, unitCost: number, supplier?: string];
 type LaborSpec = [dayOffset: number, role: string, worker: string, hours: number, rate: number];
-type CostSpec = [dayOffset: number, type: Exclude<ActualEntryType, "labor">, description: string, amount: number, supplier?: string];
+type CostSpec = [
+  dayOffset: number,
+  type: Exclude<ActualEntryType, "labor">,
+  description: string,
+  amount: number,
+  supplier?: string,
+  /** Solo "other": Diseño, Administración o Gasto financiero. */
+  category?: OtherCostCategory,
+];
 
 interface ProjectSpec {
   id: string;
@@ -144,6 +155,20 @@ class SeedBuilder {
         unit: "h",
         unitCost: rate,
         total: budgetLineTotal({ quantity: hours, unitCost: rate }),
+      });
+    }
+    for (const [category, [hours, rate]] of Object.entries(spec.hours ?? {}) as Array<["design" | "admin", [number, number]]>) {
+      lines.push({
+        id: this.id("bl"),
+        category,
+        rubro: "carpinteria_madera",
+        description: `Carpintería madera: horas de ${category === "design" ? "diseño" : "administración"}`,
+        quantity: hours,
+        unit: "h",
+        unitCost: rate,
+        total: budgetLineTotal({ quantity: hours, unitCost: rate }),
+        hourRateId: category,
+        hourType: "normal",
       });
     }
     for (const [key, amount] of Object.entries(spec.direct ?? {}) as Array<[keyof typeof DIRECT_LINES, number]>) {
@@ -277,13 +302,13 @@ class SeedBuilder {
       ev(off, "cost", worker, actualMessage(e), 18);
     }
 
-    for (const [off, type, description, amount, supplier] of spec.costs ?? []) {
+    for (const [off, type, description, amount, supplier, category] of spec.costs ?? []) {
       const e: ActualEntry = {
         id: this.id("act"),
         projectId: p.id,
         date: this.day(off),
         type,
-        category: ACTUAL_TYPE_TO_CATEGORY[type],
+        category: actualInputCategory({ type, category }),
         description: description || ACTUAL_TYPE_LABELS[type],
         amount,
         supplier,
@@ -604,6 +629,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["tapacanto", 600, 1_000],
         ],
         labor: [150, 14_000],
+        hours: { design: [16, 27_000], admin: [8, 27_000] },
         direct: { transport: 300_000, montaje: 700_000, contingency: 350_000 },
       },
       purchases: [
@@ -619,6 +645,10 @@ export function buildSeed(now: Date = new Date()): SeedState {
       labor: [
         [-12, "Carpintería", "Juan Pérez", 35, 14_000],
         [-4, "Armado", "Diego Sosa", 25, 14_000],
+      ],
+      costs: [
+        [-15, "other", "Planos de taller y renders", 486_000, "Estudio Línea", "design"],
+        [-10, "other", "Gestión de compras y permisos", 162_000, undefined, "admin"],
       ],
     }),
   );
@@ -765,6 +795,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["tapacanto", 350, 1_000],
         ],
         labor: [90, 14_000],
+        hours: { design: [10, 27_000], admin: [6, 27_000] },
         direct: { transport: 200_000, montaje: 400_000, contingency: 250_000 },
       },
     }),
@@ -822,6 +853,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["perfil-alu", 30, 15_000],
         ],
         labor: [60, 14_000],
+        hours: { design: [12, 27_000], admin: [4, 27_000] },
         direct: { bought: 400_000, transport: 250_000, montaje: 350_000, contingency: 150_000 },
       },
     }),

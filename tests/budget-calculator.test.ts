@@ -9,6 +9,7 @@ import {
   delayAnalysis,
   financialLine,
   materialBudgetQuantity,
+  ratesByCategory,
   rubroLabor,
   rubroLines,
   suggestedPrice,
@@ -22,57 +23,68 @@ import { DEFAULT_FINANCIAL_PCT, DEFAULT_HOUR_RATES } from "@/lib/constants";
 import { RUBROS } from "@/lib/rubros";
 import { line, project, usage } from "./helpers";
 
-const RATES: HourRate[] = DEFAULT_HOUR_RATES; // Mano de obra $19.000 · Administrativa / diseño $27.000
-const rates = { labor: RATES[0], admin: RATES[1] };
+const RATES: HourRate[] = DEFAULT_HOUR_RATES; // Mano de obra $19.000 · Diseño $27.000 · Administración $27.000
+const rates = ratesByCategory(RATES);
 
 const madera: QuoteRubro = {
   rubro: "carpinteria_madera",
   materials: [{ materialId: "mel-blanca-18", name: "Melamina blanca 18 mm", unit: "placa", quantity: 10, unitCost: 50_000, wastePct: 10 }],
   workers: 2,
   hoursPerWorker: 40,
-  adminHours: 10,
+  designHours: 6,
+  adminHours: 4,
   amount: 0,
 };
-const amount = (rubro: QuoteRubro["rubro"], value: number): QuoteRubro => ({ rubro, materials: [], workers: 0, hoursPerWorker: 0, adminHours: 0, amount: value });
-const full = { normalShare: 1, laborRate: 19_000, adminRate: 27_000, overtimeMultiplier: 2 };
+const amount = (rubro: QuoteRubro["rubro"], value: number): QuoteRubro => ({ rubro, materials: [], workers: 0, hoursPerWorker: 0, designHours: 0, adminHours: 0, amount: value });
+const full = { normalShare: 1, laborRate: 19_000, designRate: 27_000, adminRate: 27_000, overtimeMultiplier: 2 };
 
 describe("catálogo de rubros", () => {
   it("es cerrado: trece rubros, y solo Transporte / Fletes e Imprevistos son un importe", () => {
     expect(RUBROS).toHaveLength(13);
     expect(RUBROS.filter((r) => r.kind === "amount").map((r) => r.label)).toEqual(["Transporte / Fletes", "Imprevistos"]);
   });
-  it("tarifas iniciales: Mano de obra $19.000 y Administrativa / diseño $27.000; gasto financiero 5%", () => {
+  it("tarifas iniciales: Mano de obra $19.000, Diseño $27.000 y Administración $27.000; gasto financiero 5%", () => {
     expect(DEFAULT_HOUR_RATES.map((r) => [r.name, r.hourlyRate, r.category])).toEqual([
       ["Mano de obra", 19_000, "labor"],
-      ["Administrativa / diseño", 27_000, "admin"],
+      ["Diseño", 27_000, "design"],
+      ["Administración", 27_000, "admin"],
     ]);
     expect(DEFAULT_FINANCIAL_PCT).toBe(5);
   });
 });
 
 describe("cálculo por rubro", () => {
-  it("materiales con desperdicio, operarios × horas por operario y horas administrativas", () => {
+  it("materiales con desperdicio, operarios × horas por operario, diseño y administración por separado", () => {
     expect(materialBudgetQuantity(madera.materials[0])).toBe(11);
     const labor = rubroLabor(madera, full);
-    expect(labor).toMatchObject({ normalHours: 80, overtimeHours: 0, normalCost: 1_520_000, adminHours: 10, adminCost: 270_000, total: 1_790_000 });
+    expect(labor).toMatchObject({
+      normalHours: 80,
+      overtimeHours: 0,
+      normalCost: 1_520_000,
+      design: { hours: 6, rate: 27_000, cost: 162_000 },
+      admin: { hours: 4, rate: 27_000, cost: 108_000 },
+      total: 1_790_000,
+    });
     const lines = rubroLines(madera, labor, rates, 2);
     expect(lines.map((l) => [l.category, l.rubro, l.quantity, l.unitCost])).toEqual([
       ["materials", "carpinteria_madera", 11, 50_000],
       ["labor", "carpinteria_madera", 80, 19_000],
-      ["admin", "carpinteria_madera", 10, 27_000],
+      ["design", "carpinteria_madera", 6, 27_000],
+      ["admin", "carpinteria_madera", 4, 27_000],
     ]);
     expect(totalOfLines(lines)).toBe(550_000 + 1_520_000 + 270_000);
   });
 
   it("cada hora guarda el tipo de hora y la tarifa vigente (congelada en la línea)", () => {
-    const [, laborLine, adminLine] = rubroLines(madera, rubroLabor(madera, full), rates, 2);
+    const [, laborLine, designLine, adminLine] = rubroLines(madera, rubroLabor(madera, full), rates, 2);
+    expect(designLine).toMatchObject({ hourRateId: "design", unitCost: 27_000 });
     expect(laborLine).toMatchObject({ hourRateId: "labor", hourType: "normal", unitCost: 19_000 });
     expect(adminLine).toMatchObject({ hourRateId: "admin", unitCost: 27_000 });
     expect(laborLine.notes).toContain("vigente al cotizar");
   });
 
   it("un material comprado hecho: cantidad 1 y el costo total", () => {
-    const r: QuoteRubro = { ...madera, materials: [{ name: "Vidrio templado cortado", unit: "u", quantity: 1, unitCost: 480_000, wastePct: 0 }], workers: 0, adminHours: 0 };
+    const r: QuoteRubro = { ...madera, materials: [{ name: "Vidrio templado cortado", unit: "u", quantity: 1, unitCost: 480_000, wastePct: 0 }], workers: 0, designHours: 0, adminHours: 0 };
     const lines = rubroLines({ ...r, rubro: "vidrios" }, rubroLabor(r, full), rates, 2);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({ category: "materials", rubro: "vidrios", quantity: 1, unitCost: 480_000 });
@@ -95,7 +107,18 @@ describe("cálculo por rubro", () => {
     const base = rubroLabor(madera, full).total;
     expect(rubroLabor({ ...madera, hoursPerWorker: 50 }, full).total).toBe(base + 2 * 10 * 19_000);
     expect(rubroLabor(madera, { ...full, laborRate: 20_000 }).total).toBe(base + 80 * 1_000);
-    expect(rubroLabor(madera, { ...full, adminRate: 30_000 }).total).toBe(base + 10 * 3_000);
+    expect(rubroLabor(madera, { ...full, adminRate: 30_000 }).total).toBe(base + 4 * 3_000);
+  });
+
+  it("cambiar la tarifa de Diseño no cambia Administración (y al revés)", () => {
+    const base = rubroLabor(madera, full);
+    const design = rubroLabor(madera, { ...full, designRate: 40_000 });
+    expect(design.design.cost).toBe(6 * 40_000);
+    expect(design.admin).toEqual(base.admin);
+    const admin = rubroLabor(madera, { ...full, adminRate: 10_000 });
+    expect(admin.admin.cost).toBe(4 * 10_000);
+    expect(admin.design).toEqual(base.design);
+    expect(admin.normalCost).toBe(base.normalCost);
   });
 });
 
@@ -201,7 +224,7 @@ describe("precio sugerido con rentabilidad separada y gasto financiero", () => {
     expect(financialLine(5, 0)).toBeNull();
   });
 
-  it("las horas administrativas cuentan como mano de obra para el precio", () => {
+  it("diseño y administración cuentan como mano de obra para el precio (a confirmar)", () => {
     const lines = rubroLines(madera, rubroLabor(madera, full), rates, 2);
     expect(costGroups(lines)).toEqual({ materials: 550_000, labor: 1_790_000, transport: 0, contingency: 0 });
   });
@@ -214,7 +237,7 @@ describe("de la calculadora al costo presupuestado", () => {
     materialsTargetPct: "30",
     laborTargetPct: "40",
     rubros: [
-      row({ materials: [{ key: "m1", name: "Melamina blanca 18 mm", unit: "placa", quantity: "10", unitCost: "50000", wastePct: "10" }], workers: "2", hoursPerWorker: "40", adminHours: "10" }),
+      row({ materials: [{ key: "m1", name: "Melamina blanca 18 mm", unit: "placa", quantity: "10", unitCost: "50000", wastePct: "10" }], workers: "2", hoursPerWorker: "40", designHours: "6", adminHours: "4" }),
       { ...newRubroRow("transporte"), amount: "100000" },
       { ...newRubroRow("imprevistos"), amount: "50000" },
     ],

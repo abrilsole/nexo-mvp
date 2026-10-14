@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────
 // Rubros (sectores) de la cotización — catálogo cerrado (Lote 4).
 // Cada rubro de tipo "full" tiene materiales, horas de mano de obra y horas
-// administrativas / diseño; los de tipo "amount" son solo un importe.
+// de diseño y de administración; los de tipo "amount" son solo un importe.
 // Las categorías de reporte se derivan de acá (ver lib/budget-calculator.ts).
 // ─────────────────────────────────────────────────────────────
 import type { BudgetCategory, RubroId } from "@/types";

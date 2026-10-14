@@ -81,7 +81,7 @@ export const FEATURES = [
 export const STEPS = [
   {
     title: "Cargás el costo presupuestado",
-    body: `Por rubros (carpintería, vidrios, pintura, herrajes…): materiales, horas de mano de obra y horas administrativas. Con el precio de venta, ${APP_NAME} calcula la rentabilidad esperada.`,
+    body: `Por rubros (carpintería, vidrios, pintura, herrajes…): materiales, horas de mano de obra, de diseño y de administración. Con el precio de venta, ${APP_NAME} calcula la rentabilidad esperada.`,
   },
   {
     title: "El taller registra lo que pasó",

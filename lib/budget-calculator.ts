@@ -1,16 +1,16 @@
 // ─────────────────────────────────────────────────────────────
 // Cotización por rubros — funciones puras, sin UI ni estado (Lote 4).
 //
-// Cada rubro tiene materiales, operarios × horas por operario y horas
-// administrativas / diseño (o solo un importe: Transporte / Fletes e
+// Cada rubro tiene materiales, operarios × horas por operario, horas de
+// diseño y horas de administración (o solo un importe: Transporte / Fletes e
 // Imprevistos). De ahí salen las líneas del costo presupuestado, los días
 // de trabajo, las horas extra, el precio sugerido y la rentabilidad.
 // Todo es una ESTIMACIÓN con lo que carga el usuario: sin datos ocultos.
 // ─────────────────────────────────────────────────────────────
-import type { BudgetCategory, HourRate, RubroId } from "@/types";
+import type { BudgetCategory, HourCategory, HourRate, RubroId } from "@/types";
 import type { BudgetLineInput } from "./project-operations";
 import { laborAmount, splitOvertime, workingDaysBetween } from "./capacity";
-import { rubroDef } from "./rubros";
+import { RUBROS, rubroDef } from "./rubros";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const finite = (n: number) => (Number.isFinite(n) ? n : 0);
@@ -35,7 +35,9 @@ export interface QuoteRubro {
   /** Cantidad de operarios (sin nombre: el jefe de planta asigna después). */
   workers: number;
   hoursPerWorker: number;
-  /** Horas administrativas / diseño del rubro (totales, sin nombre). */
+  /** Horas de diseño del rubro (totales, sin nombre). */
+  designHours: number;
+  /** Horas de administración del rubro (totales, sin nombre). */
   adminHours: number;
   /** Solo rubros de importe (Transporte / Fletes, Imprevistos). */
   amount: number;
@@ -44,7 +46,7 @@ export interface QuoteRubro {
 export interface QuoteTargets {
   /** Rentabilidad objetivo de materiales: ganancia sobre el precio de venta, en %. */
   materialsTargetPct: number;
-  /** Rentabilidad objetivo de mano de obra (incluye las horas administrativas), en %. */
+  /** Rentabilidad objetivo de mano de obra (incluye diseño y administración: a confirmar), en %. */
   laborTargetPct: number;
   /** Gasto financiero: % sobre el precio de venta. */
   financialPct: number;
@@ -75,9 +77,11 @@ export function materialBudgetQuantity(m: Pick<QuoteMaterial, "quantity" | "wast
   return round2(finite(m.quantity) * (1 + positive(m.wastePct) / 100));
 }
 
-/** Tarifa vigente del tipo de hora de esa categoría (la primera de la lista). undefined si no hay. */
-export function rateFor(rates: HourRate[], category: HourRate["category"]): HourRate | undefined {
-  return rates.find((r) => r.category === category);
+/** Tarifa vigente de cada categoría de horas (el primer tipo de hora de esa categoría en la lista). */
+export function ratesByCategory(rates: HourRate[]): RatesByCategory {
+  const out: RatesByCategory = {};
+  for (const r of rates) out[r.category] ??= r;
+  return out;
 }
 
 // ── Días de trabajo y horas extra ─────────────────────────────
@@ -121,17 +125,30 @@ export interface RubroLabor {
   overtimeRate: number;
   normalCost: number;
   overtimeCost: number;
-  adminHours: number;
-  adminRate: number;
-  adminCost: number;
-  /** Mano de obra + horas administrativas del rubro. */
+  /** Horas de diseño y de administración: sin horas extra (no dependen de los operarios). */
+  design: HourCharge;
+  admin: HourCharge;
+  /** Mano de obra + diseño + administración del rubro. */
   total: number;
 }
 
-/** Horas normales × tarifa + horas extra × tarifa × multiplicador + horas administrativas × tarifa administrativa. */
+/** Horas totales × tarifa de su tipo de hora. */
+export interface HourCharge {
+  hours: number;
+  rate: number;
+  cost: number;
+}
+
+const hourCharge = (hours: number, rate: number): HourCharge => {
+  const h = positive(hours);
+  const r = positive(rate);
+  return { hours: h, rate: r, cost: round2(h * r) };
+};
+
+/** Horas normales × tarifa + horas extra × tarifa × multiplicador + diseño × su tarifa + administración × su tarifa. */
 export function rubroLabor(
-  r: Pick<QuoteRubro, "workers" | "hoursPerWorker" | "adminHours">,
-  p: { normalShare: number; laborRate: number; adminRate: number; overtimeMultiplier: number },
+  r: Pick<QuoteRubro, "workers" | "hoursPerWorker" | "designHours" | "adminHours">,
+  p: { normalShare: number; laborRate: number; designRate: number; adminRate: number; overtimeMultiplier: number },
 ): RubroLabor {
   const workers = Math.max(0, Math.round(finite(r.workers)));
   const hoursPerWorker = workers > 0 ? positive(r.hoursPerWorker) : 0;
@@ -139,9 +156,8 @@ export function rubroLabor(
   const normalHours = round2(perWorker.normalHours * workers);
   const overtimeHours = round2(perWorker.overtimeHours * workers);
   const labor = laborAmount({ normalHours, overtimeHours, hourlyCost: p.laborRate, multiplier: p.overtimeMultiplier });
-  const adminHours = positive(r.adminHours);
-  const adminRate = positive(p.adminRate);
-  const adminCost = round2(adminHours * adminRate);
+  const design = hourCharge(r.designHours, p.designRate);
+  const admin = hourCharge(r.adminHours, p.adminRate);
   return {
     workers,
     hoursPerWorker,
@@ -153,10 +169,9 @@ export function rubroLabor(
     overtimeRate: labor.overtimeRate,
     normalCost: labor.normalCost,
     overtimeCost: labor.overtimeCost,
-    adminHours,
-    adminRate,
-    adminCost,
-    total: round2(labor.total + adminCost),
+    design,
+    admin,
+    total: round2(labor.total + design.cost + admin.cost),
   };
 }
 
@@ -166,7 +181,12 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 const num = (n: number) => String(round2(n)).replace(".", ",");
 
 /** Líneas de un rubro, cada una trazable a lo cargado. Las horas guardan el tipo de hora y su tarifa vigente. */
-export function rubroLines(r: QuoteRubro, labor: RubroLabor | null, rates: { labor?: HourRate; admin?: HourRate }, overtimeMultiplier: number): BudgetLineInput[] {
+/** Tarifa vigente de cada categoría de horas (undefined = no hay tipo de hora de esa categoría). */
+export type RatesByCategory = Partial<Record<HourCategory, HourRate>>;
+
+const rateNote = (rate: HourRate | undefined) => (rate ? `Tarifa "${rate.name}" vigente al cotizar.` : undefined);
+
+export function rubroLines(r: QuoteRubro, labor: RubroLabor | null, rates: RatesByCategory, overtimeMultiplier: number): BudgetLineInput[] {
   const def = rubroDef(r.rubro);
   if (def.kind === "amount") {
     const amount = positive(r.amount);
@@ -198,7 +218,7 @@ export function rubroLines(r: QuoteRubro, labor: RubroLabor | null, rates: { lab
       unitCost: labor.rate,
       hourRateId: rates.labor?.id,
       hourType: "normal",
-      notes: rates.labor ? `Tarifa "${rates.labor.name}" vigente al cotizar.` : undefined,
+      notes: rateNote(rates.labor),
     });
   }
   if (labor && labor.overtimeHours > 0) {
@@ -216,17 +236,22 @@ export function rubroLines(r: QuoteRubro, labor: RubroLabor | null, rates: { lab
       notes: `Tarifa ${num(labor.rate)} × ${num(multiplier)}.`,
     });
   }
-  if (labor && labor.adminHours > 0) {
+  const flat: Array<[Extract<HourCategory, "design" | "admin">, HourCharge | undefined, string]> = [
+    ["design", labor?.design, "horas de diseño"],
+    ["admin", labor?.admin, "horas de administración"],
+  ];
+  for (const [category, charge, what] of flat) {
+    if (!charge || !(charge.hours > 0)) continue;
     lines.push({
-      category: "admin",
+      category,
       rubro: r.rubro,
-      description: `${def.label}: horas administrativas / diseño`,
-      quantity: labor.adminHours,
+      description: `${def.label}: ${what}`,
+      quantity: charge.hours,
       unit: "h",
-      unitCost: labor.adminRate,
-      hourRateId: rates.admin?.id,
+      unitCost: charge.rate,
+      hourRateId: rates[category]?.id,
       hourType: "normal",
-      notes: rates.admin ? `Tarifa "${rates.admin.name}" vigente al cotizar.` : undefined,
+      notes: rateNote(rates[category]),
     });
   }
   return lines;
@@ -268,12 +293,56 @@ export function totalOfLines(lines: BudgetLineInput[]): number {
   return round2(lines.reduce((s, l) => s + (l.quantity === null ? l.unitCost : l.quantity * l.unitCost), 0));
 }
 
+// ── Resumen por rubro (paso "Revisar y crear") ───────────────
+
+export interface RubroTableRow {
+  /** Rubro; undefined = ajustes por historial (no tienen rubro). */
+  rubro?: RubroId;
+  materials: number;
+  labor: number;
+  design: number;
+  admin: number;
+  /** Transporte / Fletes e Imprevistos: solo un importe. */
+  amount: number;
+  total: number;
+}
+
+export interface RubroTable {
+  rows: RubroTableRow[];
+  financial: number;
+  /** Igual al costo presupuestado (totalOfLines de las mismas líneas). */
+  total: number;
+}
+
+/**
+ * Una fila por rubro con importe (en el orden del catálogo) y, al final, los ajustes por historial.
+ * El gasto financiero va aparte. Cada celda es la suma de líneas del costo presupuestado.
+ */
+export function rubroTable(lines: BudgetLineInput[]): RubroTable {
+  const sum = (ls: BudgetLineInput[], ...cats: BudgetCategory[]) => totalOfLines(ls.filter((l) => cats.includes(l.category)));
+  const row = (ls: BudgetLineInput[], rubro?: RubroId): RubroTableRow => ({
+    rubro,
+    materials: sum(ls, "materials"),
+    labor: sum(ls, "labor"),
+    design: sum(ls, "design"),
+    admin: sum(ls, "admin"),
+    amount: sum(ls, "transport", "contingency"),
+    total: totalOfLines(ls),
+  });
+  const costLines = lines.filter((l) => l.category !== "financial");
+  const rows = [
+    ...RUBROS.map((def) => row(costLines.filter((l) => l.rubro === def.id), def.id)),
+    row(costLines.filter((l) => !l.rubro)),
+  ].filter((r) => r.total !== 0);
+  return { rows, financial: sum(lines, "financial"), total: totalOfLines(lines) };
+}
+
 // ── Precio sugerido y rentabilidad ────────────────────────────
 
 /** Costos agrupados como los usa la fórmula del precio (sin el gasto financiero, que depende del precio). */
 export interface CostGroups {
   materials: number;
-  /** Mano de obra + horas administrativas / diseño. */
+  /** Mano de obra + diseño + administración (un solo objetivo de rentabilidad: a confirmar). */
   labor: number;
   transport: number;
   contingency: number;
@@ -281,7 +350,7 @@ export interface CostGroups {
 
 export function costGroups(lines: BudgetLineInput[]): CostGroups {
   const of = (...cats: BudgetCategory[]) => totalOfLines(lines.filter((l) => cats.includes(l.category)));
-  return { materials: of("materials"), labor: of("labor", "admin"), transport: of("transport"), contingency: of("contingency") };
+  return { materials: of("materials"), labor: of("labor", "design", "admin"), transport: of("transport"), contingency: of("contingency") };
 }
 
 const costWithoutFinancial = (c: CostGroups) => round2(c.materials + c.labor + c.transport + c.contingency);
@@ -318,7 +387,7 @@ export interface SuggestedPrice extends PriceAnalysis {
 }
 
 /**
- * Precio sugerido = ( Materiales / (1 − rent. materiales) + Mano de obra y administración / (1 − rent. mano de obra)
+ * Precio sugerido = ( Materiales / (1 − rent. materiales) + Mano de obra, diseño y administración / (1 − rent. mano de obra)
  *                     + Transporte + Imprevistos ) / (1 − % gasto financiero)
  * Se redondea hacia arriba al peso. null si falta costo o algún porcentaje no es válido (≥ 100%).
  */

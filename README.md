@@ -125,7 +125,7 @@ Los datos se guardan en Supabase, por empresa. Solo el modo Gestión/Taller eleg
 | Costo material real | `Σ (consumido + desperdicio) × unitCost` de **MaterialUsageEntry** |
 | Costo no material | `Σ actualEntries.amount` (horas = `hours × hourlyCost`) |
 | Costo real hasta hoy | material + no material |
-| Desvío por categoría | `real − presupuestado`; `% = / presupuestado` (presupuestado 0 → sin %). Siempre las seis categorías de reporte: Materiales, Mano de obra, Administración y diseño, Transporte y fletes, Gasto financiero, Imprevistos (Lote 4, ver `docs/DECISIONES_RUBROS.md`) |
+| Desvío por categoría | `real − presupuestado`; `% = / presupuestado` (presupuestado 0 → sin %). Siempre las siete categorías de reporte: Materiales, Mano de obra, Diseño, Administración, Transporte y fletes, Gasto financiero, Imprevistos (Lote 4, ver `docs/DECISIONES_RUBROS.md`) |
 | **Costo final proyectado** | `Σ_categoría max(presupuestado, real)` |
 | Diferencia y “¿Por qué?” | `Σ_categoría (proyectado − presupuestado)`: el “¿Por qué?” lista cada categoría con desvío ≠ 0 y su total es exactamente la Diferencia |
 | **Rentabilidad proyectada** | `(venta − costo final proyectado) / venta` |
