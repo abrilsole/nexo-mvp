@@ -85,6 +85,8 @@ export interface BudgetLine {
   operatorId?: string;
   /** "overtime" = horas extra: unitCost ya es tarifa × multiplicador. */
   hourType?: "normal" | "overtime";
+  /** Mano de obra: jornada (horas por día) usada al cotizar, congelada con la tarifa. */
+  hoursPerDay?: number;
   /** Multiplicador usado en las horas extra (trazabilidad del importe). */
   overtimeMultiplier?: number;
 }
@@ -95,6 +97,8 @@ export interface CostSettings {
   overtimeMultiplier: number;
   /** Gasto financiero: % sobre el precio de venta (a confirmar con el cliente). */
   financialPct: number;
+  /** Jornada del operario, en horas por día (Configuración). */
+  hoursPerDay: number;
 }
 
 /** Categorías de reporte que pueden tener horas. */

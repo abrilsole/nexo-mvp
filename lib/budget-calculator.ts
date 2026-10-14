@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────
 import type { BudgetCategory, HourCategory, HourRate, RubroId } from "@/types";
 import type { BudgetLineInput } from "./project-operations";
-import { laborAmount, splitOvertime, workingDaysBetween } from "./capacity";
+import { laborAmount, splitOvertime } from "./capacity";
 import { RUBROS, rubroDef } from "./rubros";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -56,9 +56,8 @@ export interface QuoteInput extends QuoteTargets {
   rubros: QuoteRubro[];
   /** Jornada diaria por operario, en horas. */
   hoursPerDay: number;
-  startDate: string;
-  /** Fecha de entrega comprometida (opcional). */
-  deadline: string | null;
+  /** Plazo en días hábiles (opcional). Sin plazo no hay horas extra. */
+  deadlineDays: number | null;
   rates: HourRate[];
   overtimeMultiplier: number;
 }
@@ -91,9 +90,9 @@ export interface WorkSchedule {
   neededDays: number;
   /** Lo mismo, redondeado hacia arriba a días enteros. */
   workDays: number;
-  /** Días hábiles desde el inicio hasta la entrega comprometida (null = sin fecha). */
+  /** Plazo en días hábiles (null = sin plazo). */
   availableDays: number | null;
-  /** null = sin fecha de entrega. */
+  /** null = sin plazo. */
   fits: boolean | null;
   /** Parte de las horas que entra en horario normal (1 = todas). Lo demás son horas extra. */
   normalShare: number;
@@ -102,13 +101,13 @@ export interface WorkSchedule {
 /**
  * Supuesto conservador (a confirmar): los rubros se hacen uno detrás de otro. Cada rubro suma
  * horas por operario / jornada; sus operarios trabajan en paralelo dentro del rubro.
- * Si con la fecha de entrega no alcanzan los días, la misma proporción de horas de cada rubro
+ * Si con el plazo no alcanzan los días, la misma proporción de horas de cada rubro
  * pasa a horas extra (horas disponibles / horas necesarias).
  */
-export function workSchedule(rubros: QuoteRubro[], hoursPerDay: number, startDate: string, deadline: string | null): WorkSchedule {
+export function workSchedule(rubros: QuoteRubro[], hoursPerDay: number, deadlineDays: number | null): WorkSchedule {
   const hpd = positive(hoursPerDay);
   const neededDays = hpd > 0 ? rubros.filter((r) => r.workers > 0).reduce((s, r) => s + positive(r.hoursPerWorker) / hpd, 0) : 0;
-  const availableDays = deadline ? workingDaysBetween(startDate, deadline) : null;
+  const availableDays = deadlineDays !== null && deadlineDays > 0 ? Math.floor(deadlineDays) : null;
   const fits = availableDays === null ? null : neededDays <= availableDays + 1e-9;
   const normalShare = availableDays === null || neededDays === 0 ? 1 : Math.min(1, availableDays / neededDays);
   return { neededDays: round2(neededDays), workDays: Math.ceil(neededDays - 1e-9), availableDays, fits, normalShare };
@@ -186,7 +185,14 @@ export type RatesByCategory = Partial<Record<HourCategory, HourRate>>;
 
 const rateNote = (rate: HourRate | undefined) => (rate ? `Tarifa "${rate.name}" vigente al cotizar.` : undefined);
 
-export function rubroLines(r: QuoteRubro, labor: RubroLabor | null, rates: RatesByCategory, overtimeMultiplier: number): BudgetLineInput[] {
+/** Lo que se congela en las líneas de horas: tarifas, multiplicador de horas extra y jornada (Configuración). */
+export interface LineAssumptions {
+  rates: RatesByCategory;
+  overtimeMultiplier: number;
+  hoursPerDay: number;
+}
+
+export function rubroLines(r: QuoteRubro, labor: RubroLabor | null, { rates, overtimeMultiplier, hoursPerDay }: LineAssumptions): BudgetLineInput[] {
   const def = rubroDef(r.rubro);
   if (def.kind === "amount") {
     const amount = positive(r.amount);
@@ -218,6 +224,7 @@ export function rubroLines(r: QuoteRubro, labor: RubroLabor | null, rates: Rates
       unitCost: labor.rate,
       hourRateId: rates.labor?.id,
       hourType: "normal",
+      hoursPerDay,
       notes: rateNote(rates.labor),
     });
   }
@@ -233,6 +240,7 @@ export function rubroLines(r: QuoteRubro, labor: RubroLabor | null, rates: Rates
       hourRateId: rates.labor?.id,
       hourType: "overtime",
       overtimeMultiplier: multiplier,
+      hoursPerDay,
       notes: `Tarifa ${num(labor.rate)} × ${num(multiplier)}.`,
     });
   }
@@ -403,67 +411,6 @@ export function suggestedPrice(costs: CostGroups, t: QuoteTargets): SuggestedPri
     laborPrice,
     materialsMargin: costs.materials > 0 ? marginAt(materialsPrice, costs.materials) : null,
     laborMargin: costs.labor > 0 ? marginAt(laborPrice, costs.labor) : null,
-  };
-}
-
-// ── Sensibilidad al atraso ────────────────────────────────────
-
-/** Costo promedio de un día de trabajo: mano de obra en horario normal / días de trabajo estimados. */
-export function averageDailyLaborCost(labor: RubroLabor[], neededDays: number): number {
-  if (!(neededDays > 0)) return 0;
-  return round2(labor.reduce((s, l) => s + l.normalCost, 0) / neededDays);
-}
-
-/** El gráfico “¿Qué pasa si el proyecto se alarga?” solo tiene sentido con precio de venta, costo y más de un día de trabajo. */
-export function showDelayChart(p: { salesPrice: number; workingDays: number; dailyCost: number; cost: number }): boolean {
-  return p.salesPrice > 0 && p.workingDays > 1 && p.dailyCost > 0 && p.cost > 0;
-}
-
-export interface DelayPoint {
-  extraDays: number;
-  cost: number;
-  margin: number | null;
-}
-
-export interface DelayAnalysis {
-  dailyCost: number;
-  points: DelayPoint[];
-  /** Días de atraso que se pueden absorber sin bajar de la rentabilidad objetivo (0 = cualquier atraso ya la baja). null si no hay datos. */
-  extraDaysBeforeTarget: number | null;
-  /** Días de atraso hasta rentabilidad 0 (ganancia nula). null si faltan datos. */
-  extraDaysToBreakEven: number | null;
-  /** true si ya en fecha la rentabilidad queda por debajo del objetivo. */
-  belowTargetAtBase: boolean;
-}
-
-/**
- * ¿Cuánta rentabilidad se pierde por cada día extra?
- * Supuesto explícito: cada día de atraso cuesta lo mismo que un día promedio de trabajo.
- */
-export function delayAnalysis(params: { baseCost: number; salesPrice: number; dailyCost: number; targetMarginPct: number; maxExtraDays?: number }): DelayAnalysis {
-  const { baseCost, salesPrice, dailyCost, targetMarginPct } = params;
-  const max = params.maxExtraDays ?? 15;
-  const points: DelayPoint[] = [];
-  for (let d = 0; d <= max; d += 1) {
-    const cost = round2(baseCost + d * dailyCost);
-    const margin = marginAt(salesPrice, cost);
-    points.push({ extraDays: d, cost, margin });
-    // No tiene sentido seguir graficando cuando ya se perdió bastante más que la ganancia.
-    if (margin !== null && margin < -10) break;
-  }
-  const baseMargin = marginAt(salesPrice, baseCost);
-  if (baseMargin === null || !(dailyCost > 0)) {
-    return { dailyCost, points, extraDaysBeforeTarget: null, extraDaysToBreakEven: null, belowTargetAtBase: false };
-  }
-  const belowTargetAtBase = baseMargin < targetMarginPct - 1e-9;
-  const allowedCostForTarget = salesPrice * (1 - targetMarginPct / 100);
-  const slackDays = Math.floor((allowedCostForTarget - baseCost + 1e-6) / dailyCost);
-  return {
-    dailyCost,
-    points,
-    extraDaysBeforeTarget: belowTargetAtBase ? 0 : Math.max(0, slackDays),
-    extraDaysToBreakEven: Math.max(0, Math.floor((salesPrice - baseCost) / dailyCost)),
-    belowTargetAtBase,
   };
 }
 

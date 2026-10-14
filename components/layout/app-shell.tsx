@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Boxes, Calculator, FolderKanban, History, HardHat, LayoutDashboard, LogOut, Menu, Plus, RotateCcw, Settings, TriangleAlert, X } from "lucide-react";
+import { Boxes, Calculator, FolderKanban, History, HardHat, LayoutDashboard, LogOut, Menu, Plus, Settings, TriangleAlert, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { APP_NAME, APP_SUBTITLE } from "@/lib/constants";
 import { useAppStore } from "@/store/use-app-store";
@@ -37,7 +37,6 @@ function useBreadcrumb(): Crumb[] {
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
-  const resetDemo = useAppStore((s) => s.resetDemo);
   const { count } = useAlerts();
   const userName = useAppStore((s) => s.userName);
   const userEmail = useAppStore((s) => s.userEmail);
@@ -85,16 +84,6 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             </div>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start text-slate-500"
-          onClick={() => {
-            if (window.confirm("¿Restaurar los datos demo iniciales? Se perderán los registros cargados.")) void resetDemo();
-          }}
-        >
-          <RotateCcw /> Reset demo
-        </Button>
         <form action="/auth/signout" method="post">
           <Button type="submit" variant="ghost" size="sm" className="w-full justify-start text-slate-500">
             <LogOut /> Cerrar sesión

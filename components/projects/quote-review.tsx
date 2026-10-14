@@ -7,6 +7,7 @@ import { marginPercent, profitOrNull } from "@/lib/calculations";
 import { formatCurrency, formatCurrencyOrDash, formatDate, formatNumber, formatPercent, formatWorkingDays } from "@/lib/formatting";
 import { rubroLabel } from "@/lib/rubros";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { HelpTip } from "@/components/ui/help-tip";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { ratesText, reviewWarnings, type CalculatorResult } from "@/components/budget/calculator-state";
 import { cn } from "@/lib/utils";
@@ -113,13 +114,21 @@ export function QuoteReview({ info, calc, salesPrice }: { info: ReviewInfo; calc
         </section>
 
         <section aria-label="Supuestos" className="space-y-1 text-sm text-slate-600">
-          <h3 className="text-sm font-semibold text-slate-900">Supuestos</h3>
+          <div className="flex items-center gap-1">
+            <h3 className="text-sm font-semibold text-slate-900">Supuestos</h3>
+            <HelpTip label="Supuestos">
+              Días de trabajo = horas por operario / jornada, sumando los rubros uno detrás de otro. Es un supuesto conservador, a confirmar con el cliente.
+            </HelpTip>
+          </div>
           <p>
-            Tarifas: {ratesText(calc.rates)}. Gasto financiero: {formatNumber(calc.input.financialPct, 2)}% del precio de venta.
+            Tarifas: {ratesText(calc.rates)}. Jornada del operario: {formatNumber(calc.input.hoursPerDay, 1)} h. Gasto financiero:{" "}
+            {formatNumber(calc.input.financialPct, 2)}% del precio de venta.
           </p>
           <p>
-            Días de trabajo estimados: {schedule.workDays > 0 ? formatWorkingDays(schedule.workDays) : "—"} (rubros uno detrás de otro: supuesto a confirmar).{" "}
-            {schedule.fits === null ? "Sin fecha de entrega." : schedule.fits ? "Entra hasta la fecha de entrega." : "No entra hasta la fecha de entrega."}
+            Días de trabajo estimados: {schedule.workDays > 0 ? formatWorkingDays(schedule.workDays) : "—"}.{" "}
+            {schedule.availableDays === null
+              ? "Sin plazo."
+              : `Plazo: ${formatWorkingDays(schedule.availableDays)} hábiles; ${schedule.fits ? "entra" : "no entra"}.`}
           </p>
         </section>
 

@@ -5,7 +5,7 @@ import { remainingBudgetText } from "@/lib/insights";
 import { MARGIN_TOOLTIP } from "@/lib/constants";
 import { formatCurrency, formatCurrencyOrDash } from "@/lib/formatting";
 import { Card, CardContent } from "@/components/ui/card";
-import { InfoTooltip } from "@/components/ui/tooltip";
+import { HelpTip } from "@/components/ui/help-tip";
 import { MarginShift } from "@/components/shared/margin-shift";
 
 function Money({ label, value, hint, tooltip }: { label: string; value: string; hint?: string; tooltip?: string }) {
@@ -13,7 +13,7 @@ function Money({ label, value, hint, tooltip }: { label: string; value: string; 
     <div className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
         {label}
-        {tooltip && <InfoTooltip content={tooltip} />}
+        {tooltip && <HelpTip label={label}>{tooltip}</HelpTip>}
       </div>
       <div className="mt-1 text-lg font-semibold tabular text-slate-900">{value}</div>
       {hint && <div className="mt-0.5 text-xs text-slate-500">{hint}</div>}
@@ -34,7 +34,7 @@ export function EconomicSummary({ project, econ }: { project: Project; econ: Pro
       <CardContent className="pt-5">
         <div className="mb-3 flex items-center gap-1.5 text-sm font-medium text-slate-600">
           {completed ? "Rentabilidad esperada vs. rentabilidad real final" : "¿Estoy ganando lo que pensé?"}
-          {!completed && !noData && <InfoTooltip content={MARGIN_TOOLTIP} label="Qué es la rentabilidad proyectada" />}
+          {!completed && !noData && <HelpTip label="Rentabilidad proyectada">{MARGIN_TOOLTIP}</HelpTip>}
         </div>
         {noData ? (
           <>

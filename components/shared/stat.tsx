@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { InfoTooltip } from "@/components/ui/tooltip";
+import { HelpTip } from "@/components/ui/help-tip";
 
 export function Stat({
   label,
@@ -20,7 +20,7 @@ export function Stat({
     <div className={cn("rounded-lg border border-slate-200 bg-white p-4 shadow-sm", className)}>
       <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
         {label}
-        {tooltip && <InfoTooltip content={tooltip} label={`Qué es ${label}`} />}
+        {tooltip && <HelpTip label={label}>{tooltip}</HelpTip>}
       </div>
       <div
         className={cn(

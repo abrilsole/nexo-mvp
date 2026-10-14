@@ -2,7 +2,7 @@
 // Traducción entre el modelo de dominio (types/) y las filas de Supabase.
 // El dominio no conoce la base: todo el snake_case vive acá.
 // ─────────────────────────────────────────────────────────────
-import { DEFAULT_FINANCIAL_PCT, DEFAULT_OVERTIME_MULTIPLIER, HOUR_CATEGORIES, normalizeCategory } from "@/lib/constants";
+import { DEFAULT_FINANCIAL_PCT, DEFAULT_HOURS_PER_DAY, DEFAULT_OVERTIME_MULTIPLIER, HOUR_CATEGORIES, normalizeCategory } from "@/lib/constants";
 import { isRubroId } from "@/lib/rubros";
 import type {
   ActivityEvent,
@@ -104,6 +104,7 @@ const childToRow: { [K in ChildKey]: (org: string, projectId: string, item: Proj
     operator_id: l.operatorId ?? null,
     hour_type: l.hourType ?? null,
     overtime_multiplier: l.overtimeMultiplier ?? null,
+    hours_per_day: l.hoursPerDay ?? null,
   }),
   purchaseEntries: (org, projectId, e: PurchaseEntry, position) => ({
     organization_id: org,
@@ -234,6 +235,7 @@ function budgetLineFromRow(r: Row): BudgetLine {
     operatorId: opt(r.operator_id as string | null | undefined),
     hourType: r.hour_type === "normal" || r.hour_type === "overtime" ? r.hour_type : undefined,
     overtimeMultiplier: r.overtime_multiplier === null || r.overtime_multiplier === undefined ? undefined : num(r.overtime_multiplier),
+    hoursPerDay: r.hours_per_day === null || r.hours_per_day === undefined ? undefined : num(r.hours_per_day),
   };
 }
 
@@ -605,9 +607,11 @@ export function requestFromRow(r: Row): MaterialRequest {
 export function costSettingsFromRow(r: Row): CostSettings {
   const m = r.overtime_multiplier === null || r.overtime_multiplier === undefined ? NaN : Number(r.overtime_multiplier);
   const f = r.financial_pct === null || r.financial_pct === undefined ? NaN : Number(r.financial_pct);
+  const h = r.hours_per_day === null || r.hours_per_day === undefined ? NaN : Number(r.hours_per_day);
   return {
     overtimeMultiplier: Number.isFinite(m) && m >= 1 ? m : DEFAULT_OVERTIME_MULTIPLIER,
     financialPct: Number.isFinite(f) && f >= 0 ? f : DEFAULT_FINANCIAL_PCT,
+    hoursPerDay: Number.isFinite(h) && h >= 1 && h <= 24 ? h : DEFAULT_HOURS_PER_DAY,
   };
 }
 

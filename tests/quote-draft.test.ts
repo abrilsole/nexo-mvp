@@ -5,7 +5,7 @@ import { clearQuoteDraft, peekQuoteDraft, setQuoteDraft } from "@/components/bud
 describe("cotización en curso", () => {
   it("se guarda, se lee sin consumirla y se limpia", () => {
     expect(peekQuoteDraft()).toBeNull();
-    setQuoteDraft({ state: initialCalcState(), projectType: "Local comercial", startDate: "2026-10-07", dueDate: "2026-11-06", salesPrice: 1000 });
+    setQuoteDraft({ state: initialCalcState(), projectType: "Local comercial", salesPrice: 1000 });
     expect(peekQuoteDraft()?.salesPrice).toBe(1000);
     expect(peekQuoteDraft()?.salesPrice).toBe(1000);
     clearQuoteDraft();

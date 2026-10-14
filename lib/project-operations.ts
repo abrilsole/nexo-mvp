@@ -98,6 +98,7 @@ export interface BudgetLineInput {
   hourRateId?: string;
   operatorId?: string;
   hourType?: BudgetLine["hourType"];
+  hoursPerDay?: number;
   overtimeMultiplier?: number;
 }
 

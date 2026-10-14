@@ -6,7 +6,6 @@ import { DEFAULT_HOUR_RATES } from "@/lib/constants";
 import { computeCalculator, initialCalcState, newRubroRow, ratesText, reviewWarnings, type CalcState, type RubroRow } from "@/components/budget/calculator-state";
 
 const RATES: HourRate[] = DEFAULT_HOUR_RATES;
-const START = "2026-10-05"; // lunes
 
 const madera = (patch: Partial<RubroRow> = {}): RubroRow => ({
   ...newRubroRow("carpinteria_madera"),
@@ -32,8 +31,8 @@ const base = state([
   { ...newRubroRow("transporte"), amount: "100000" },
   { ...newRubroRow("imprevistos"), amount: "50000" },
 ]);
-const ctx = { projects: [], rates: RATES, overtimeMultiplier: 2, deadline: "", salesPrice: 6_000_000 };
-const calc = (s: CalcState, patch: Partial<typeof ctx> = {}) => computeCalculator(s, START, "Local comercial", { ...ctx, ...patch });
+const ctx = { projects: [], rates: RATES, overtimeMultiplier: 2, hoursPerDay: 8, salesPrice: 6_000_000 };
+const calc = (s: CalcState, patch: Partial<typeof ctx> = {}) => computeCalculator(s, "Local comercial", { ...ctx, ...patch });
 
 describe("tabla por rubro del paso Revisar y crear", () => {
   it("una fila por rubro con importe; las columnas se trazan a lo cargado", () => {
@@ -97,15 +96,16 @@ describe("supuestos y avisos del paso Revisar y crear", () => {
   });
 
   it("sin avisos cuando el precio es el sugerido y la fecha entra", () => {
-    const c0 = calc(base, { deadline: "2026-10-30" });
-    const c = calc(base, { deadline: "2026-10-30", salesPrice: c0.suggested!.price });
+    const longPlazo = { ...base, deadlineDays: "20" };
+    const c0 = calc(longPlazo);
+    const c = calc(longPlazo, { salesPrice: c0.suggested!.price });
     expect(reviewWarnings(c, c0.suggested!.price)).toEqual([]);
   });
 
   it("todos los avisos juntos: fecha que no entra con horas extra, precio a mano y precio faltante", () => {
-    const short = calc(base, { deadline: "2026-10-07" });
+    const short = calc({ ...base, deadlineDays: "3" });
     const w = reviewWarnings(short, 6_000_000);
-    expect(w.some((x) => /no entran hasta la fecha de entrega/.test(x) && /horas extra/.test(x))).toBe(true);
+    expect(w.some((x) => /no entran en el plazo/.test(x) && /horas extra/.test(x))).toBe(true);
     expect(w.some((x) => /escrito a mano/.test(x))).toBe(true);
     expect(reviewWarnings(calc(base, { salesPrice: 0 }), 0)).toContain("Falta el precio de venta.");
   });
