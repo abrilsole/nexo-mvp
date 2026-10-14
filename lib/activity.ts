@@ -1,6 +1,6 @@
 // Mensajes de actividad (quién, qué, cuándo). Compartido por el store y el seed.
 import type { ActivityEvent, ActivityKind, ActualEntry, MaterialUsageEntry, PurchaseEntry } from "@/types";
-import { ACTUAL_TYPE_LABELS } from "./constants";
+import { actualEntryLabel } from "./constants";
 import { formatCurrency, formatNumber, formatQty } from "./formatting";
 
 let counter = 0;
@@ -59,5 +59,5 @@ export function actualMessage(e: ActualEntry): string {
       e.labor.workerName ? ` (${e.labor.workerName})` : ""
     }.`;
   }
-  return `${e.createdBy} registró ${ACTUAL_TYPE_LABELS[e.type].toLowerCase()}: ${e.description} (${formatCurrency(e.amount)}).`;
+  return `${e.createdBy} registró ${actualEntryLabel(e).toLowerCase()}: ${e.description} (${formatCurrency(e.amount)}).`;
 }

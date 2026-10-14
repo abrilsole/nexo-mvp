@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSeed } from "@/lib/seed-data";
-import { actualByCategory } from "@/lib/calculations";
+import { projectEconomics } from "@/lib/calculations";
 import { leftoverRows, projectHoldings, stockRows } from "@/lib/stock";
 import { projectMaterialFlow } from "@/lib/material-flow";
 import { deriveLedgerFromLegacy } from "@/lib/stock-legacy";
@@ -13,7 +13,8 @@ describe("migración del modelo anterior al ledger", () => {
   it("el costo de materiales que sale del ledger coincide con el de los registros de uso", () => {
     for (const p of seed.projects) {
       const fromLedger = projectMaterialFlow(seed.stock, p.id).attributableCost;
-      const fromUsages = actualByCategory(p).materials;
+      // Materiales también incluye trabajo comprado hecho (Lote 4): se compara con el costo de los consumos.
+      const fromUsages = projectEconomics(p).materialActualCost;
       expect(Math.abs(fromLedger - fromUsages), `${p.code}: ledger ${fromLedger} vs registros ${fromUsages}`).toBeLessThan(1);
     }
   });

@@ -5,6 +5,8 @@ import type {
   BudgetCategory,
   CatalogMaterial,
   EconomicHealth,
+  HourCategory,
+  HourRate,
   MaterialSource,
   ProjectStatus,
   UnitCostOrigin,
@@ -39,29 +41,34 @@ export const STATUS_LABELS: Record<ProjectStatus, string> = {
 /** Horas extra = costo por hora × multiplicador. Se cambia en Configuración (p. ej. 1,5 en días hábiles). */
 export const DEFAULT_OVERTIME_MULTIPLIER = 2;
 
+/** Gasto financiero por defecto: % sobre el precio de venta. A confirmar con el cliente. */
+export const DEFAULT_FINANCIAL_PCT = 5;
+
+/** Categorías que tienen horas, en el orden en que se muestran. */
+export const HOUR_CATEGORIES: HourCategory[] = ["labor", "design", "admin"];
+
+/** Tipos de hora y tarifas iniciales (las que usa el cliente piloto; se cambian en Configuración). */
+export const DEFAULT_HOUR_RATES: HourRate[] = [
+  { id: "labor", name: "Mano de obra", hourlyRate: 19_000, category: "labor" },
+  { id: "design", name: "Diseño", hourlyRate: 27_000, category: "design" },
+  { id: "admin", name: "Administración", hourlyRate: 27_000, category: "admin" },
+];
+
 export const ACTIVE_STATUSES: ProjectStatus[] = ["approved", "purchasing", "production", "installation"];
 
 /** El presupuesto base solo se edita antes de ejecutar. Luego es la línea base contra la que se mide. */
 export const BUDGET_EDITABLE_STATUSES: ProjectStatus[] = ["quotation", "approved"];
 
-/** Las siete categorías de costo, siempre en este orden y con estos nombres. */
-export const CATEGORY_ORDER: BudgetCategory[] = [
-  "materials",
-  "labor",
-  "machines",
-  "outsourcing",
-  "logistics",
-  "installation",
-  "contingency",
-];
+/** Categorías de reporte, siempre en este orden y con estos nombres. Se derivan de los rubros (lib/rubros.ts). */
+export const CATEGORY_ORDER: BudgetCategory[] = ["materials", "labor", "design", "admin", "transport", "financial", "contingency"];
 
 export const CATEGORY_LABELS: Record<BudgetCategory, string> = {
   materials: "Materiales",
   labor: "Mano de obra",
-  machines: "Máquinas",
-  outsourcing: "Tercerizaciones",
-  logistics: "Logística",
-  installation: "Instalación",
+  design: "Diseño",
+  admin: "Administración",
+  transport: "Transporte y fletes",
+  financial: "Gasto financiero",
   contingency: "Imprevistos",
 };
 
@@ -69,44 +76,74 @@ export const CATEGORY_LABELS: Record<BudgetCategory, string> = {
 export const CATEGORY_IS_PLURAL: Record<BudgetCategory, boolean> = {
   materials: true,
   labor: false,
-  machines: true,
-  outsourcing: true,
-  logistics: false,
-  installation: false,
+  design: false,
+  admin: false,
+  transport: false,
+  financial: false,
   contingency: true,
 };
 
 /**
- * Normaliza categorías guardadas antes de unificar las siete:
- * "finishing" (Terminaciones) → Tercerizaciones; "other" → Máquinas si la línea es de una máquina, si no Imprevistos.
+ * Mapeo de las siete categorías anteriores (Lote 4). La migración 20261013120000 ya convirtió la base;
+ * esto cubre lo que todavía escriba una versión vieja de la app sobre la misma base.
+ *   Máquinas → Mano de obra (el uso de máquina está incluido en la mano de obra)
+ *   Tercerizaciones / Terminaciones → Materiales (se compra hecho)
+ *   Logística → Transporte y fletes · Instalación → Mano de obra (rubro Montaje)
+ *   "other" → Mano de obra si era uso de máquina; si no, Imprevistos
  */
 export function normalizeCategory(raw: string, description = ""): BudgetCategory {
   if ((CATEGORY_ORDER as string[]).includes(raw)) return raw as BudgetCategory;
-  if (raw === "finishing") return "outsourcing";
-  if (raw === "other" && /^m[aá]quina/i.test(description.trim())) return "machines";
-  return "contingency";
+  switch (raw) {
+    case "machines":
+    case "installation":
+      return "labor";
+    case "outsourcing":
+    case "finishing":
+      return "materials";
+    case "logistics":
+      return "transport";
+    case "other":
+      return /^m[aá]quina/i.test(description.trim()) ? "labor" : "contingency";
+    default:
+      return "contingency";
+  }
 }
 
-/** Tipos de costo real que se ofrecen al registrar. "finishing" queda solo para registros viejos. */
+/** Tipos de costo real. "finishing" queda solo para registros viejos. */
 export const ACTUAL_TYPE_LABELS: Record<ActualEntryType, string> = {
   labor: "Horas trabajadas",
-  other: "Uso de máquinas",
-  outsourcing: "Tercerización",
+  outsourcing: "Trabajo comprado hecho",
   finishing: "Tercerización (terminaciones)",
-  logistics: "Logística",
-  installation: "Instalación",
+  logistics: "Transporte y fletes",
+  installation: "Montaje e instalación",
   unexpected: "Imprevisto",
+  other: "Diseño, administración o gasto financiero",
 };
 
+/** Categoría por defecto de cada tipo. "other" se registra con su categoría: Diseño, Administración o Gasto financiero. */
 export const ACTUAL_TYPE_TO_CATEGORY: Record<ActualEntryType, BudgetCategory> = {
   labor: "labor",
-  other: "machines",
-  outsourcing: "outsourcing",
-  finishing: "outsourcing",
-  logistics: "logistics",
-  installation: "installation",
+  outsourcing: "materials",
+  finishing: "materials",
+  logistics: "transport",
+  installation: "labor",
   unexpected: "contingency",
+  other: "admin",
 };
+
+/** Costos reales de tipo "other" que se registran hoy: cada uno con su categoría. */
+export const OTHER_COST_CATEGORIES = ["design", "admin", "financial"] as const;
+export type OtherCostCategory = (typeof OTHER_COST_CATEGORIES)[number];
+
+export function isOtherCostCategory(c: BudgetCategory): c is OtherCostCategory {
+  return (OTHER_COST_CATEGORIES as readonly BudgetCategory[]).includes(c);
+}
+
+/** Etiqueta de un costo real ya registrado: los "other" viejos eran uso de máquinas. */
+export function actualEntryLabel(e: { type: ActualEntryType; category: BudgetCategory }): string {
+  if (e.type === "other") return isOtherCostCategory(e.category) ? CATEGORY_LABELS[e.category] : "Uso de máquinas (registro anterior)";
+  return ACTUAL_TYPE_LABELS[e.type];
+}
 
 export const SOURCE_LABELS: Record<MaterialSource, string> = {
   purchased_for_project: "Comprado para el proyecto",
@@ -123,14 +160,14 @@ export const UNIT_COST_ORIGIN_LABELS: Record<UnitCostOrigin, string> = {
 };
 
 export const MATERIAL_CATALOG: CatalogMaterial[] = [
-  { id: "mel-blanca-18", name: "Melamina blanca 18 mm", unit: "placa", referenceCost: 50000 },
-  { id: "mel-grafito-18", name: "Melamina grafito 18 mm", unit: "placa", referenceCost: 62500 },
-  { id: "mdf-18", name: "MDF 18 mm", unit: "placa", referenceCost: 80000 },
-  { id: "perfil-alu", name: "Perfil aluminio", unit: "m", referenceCost: 15000 },
-  { id: "bisagra", name: "Herraje bisagra", unit: "u", referenceCost: 2500 },
-  { id: "corredera", name: "Corredera", unit: "par", referenceCost: 12500 },
-  { id: "tapacanto", name: "Tapacanto", unit: "m", referenceCost: 1000 },
-  { id: "fenolico", name: "Fenólico", unit: "placa", referenceCost: 70000 },
+  { id: "mel-blanca-18", name: "Melamina blanca 18 mm", unit: "placa", referenceCost: 50000, rubro: "carpinteria_madera" },
+  { id: "mel-grafito-18", name: "Melamina grafito 18 mm", unit: "placa", referenceCost: 62500, rubro: "carpinteria_madera" },
+  { id: "mdf-18", name: "MDF 18 mm", unit: "placa", referenceCost: 80000, rubro: "carpinteria_madera" },
+  { id: "perfil-alu", name: "Perfil aluminio", unit: "m", referenceCost: 15000, rubro: "carpinteria_metalica" },
+  { id: "bisagra", name: "Herraje bisagra", unit: "u", referenceCost: 2500, rubro: "herrajes" },
+  { id: "corredera", name: "Corredera", unit: "par", referenceCost: 12500, rubro: "herrajes" },
+  { id: "tapacanto", name: "Tapacanto", unit: "m", referenceCost: 1000, rubro: "carpinteria_madera" },
+  { id: "fenolico", name: "Fenólico", unit: "placa", referenceCost: 70000, rubro: "carpinteria_madera" },
 ];
 
 export const OTHER_MATERIAL_ID = "__other__";

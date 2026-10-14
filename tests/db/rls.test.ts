@@ -1,9 +1,12 @@
 // Lote 2 — Seguridad: políticas de la base probadas en un Postgres real (PGlite) con tres usuarios:
 // Gestión (Laura), un operario activo (Juan) y un operario dado de baja (Diego).
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { PGlite } from "@electric-sql/pglite";
 import type { Project } from "@/types";
-import { DEFAULT_SETTINGS } from "@/lib/constants";
+import { CATEGORY_ORDER, DEFAULT_HOUR_RATES, DEFAULT_SETTINGS, normalizeCategory } from "@/lib/constants";
+import { hourRateToRow } from "@/lib/supabase/mappers";
 import { buildSeed, MAIN_DEMO_PROJECT_ID } from "@/lib/seed-data";
 import { projectHoldings, type StockState } from "@/lib/stock";
 import * as ops from "@/lib/project-operations";
@@ -25,6 +28,12 @@ function daysAgo(n: number): string {
   d.setDate(d.getDate() - n);
   return d.toISOString().slice(0, 10);
 }
+
+/** La parte de una migración que convierte datos (desde que se activa la carga masiva). */
+const conversionSql = (file: string) => {
+  const sql = readFileSync(path.resolve(import.meta.dirname, "../../supabase/migrations", file), "utf8");
+  return sql.slice(sql.indexOf("select set_config('blerp.bulk', 'on', true);"));
+};
 
 const rows = async (userId: string, sql: string, params: unknown[] = []) =>
   asUser(db, userId, async (tx) => (await tx.query<Record<string, unknown>>(sql, params)).rows);
@@ -361,5 +370,174 @@ describe("Lote 3 · operarios y horas extra en el costo presupuestado", () => {
   it("un operario dado de baja y otra empresa tampoco lo ven", async () => {
     expect(await rows(outsider, "select * from cost_settings")).toHaveLength(0);
     expect(await rows(outsider, "select * from budget_lines where hour_type is not null")).toHaveLength(0);
+  });
+});
+
+describe("Lote 4 · rubros, tarifas y categorías de reporte", () => {
+  it("la demo se carga con las categorías nuevas y el rubro en cada línea de costo presupuestado", async () => {
+    const lines = await rows(laura, "select category, rubro from budget_lines where id not like 'bl-l3-%'");
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.every((l) => (CATEGORY_ORDER as string[]).includes(String(l.category)))).toBe(true);
+    expect(lines.every((l) => l.rubro !== null)).toBe(true);
+  });
+
+  it("Gestión carga y cambia las tarifas por tipo de hora", async () => {
+    const rates = DEFAULT_HOUR_RATES.map((r, i) => hourRateToRow(org, r, i));
+    await asUser(db, laura, async (tx) => {
+      for (const r of rates) {
+        await tx.query(
+          "insert into hour_rates (organization_id, id, name, hourly_rate, kind, position) values ($1, $2, $3, $4, $5, $6)",
+          [r.organization_id, r.id, r.name, r.hourly_rate, r.kind, r.position],
+        );
+      }
+    });
+    await asUser(db, laura, (tx) => tx.query("update hour_rates set hourly_rate = 20000 where organization_id = $1 and id = 'labor'", [org]));
+    const saved = await rows(laura, "select id, hourly_rate from hour_rates order by position");
+    expect(saved.map((r) => [r.id, Number(r.hourly_rate)])).toEqual([
+      ["labor", 20_000],
+      ["design", 27_000],
+      ["admin", 27_000],
+    ]);
+    // Cambiar Diseño no toca Administración.
+    await asUser(db, laura, (tx) => tx.query("update hour_rates set hourly_rate = 30000 where organization_id = $1 and id = 'design'", [org]));
+    expect((await rows(laura, "select id, hourly_rate from hour_rates where id in ('design', 'admin') order by position")).map((r) => Number(r.hourly_rate))).toEqual([
+      30_000, 27_000,
+    ]);
+    expect(await errorAs(db, laura, (tx) => tx.query("update hour_rates set hourly_rate = 0 where organization_id = $1", [org]))).toMatch(/check/);
+    expect(await errorAs(db, laura, (tx) => tx.query("update hour_rates set kind = 'otro' where organization_id = $1", [org]))).toMatch(/hour_rates_kind_check/);
+  });
+
+  it("el gasto financiero se guarda con Gestión (5% por defecto) y se valida", async () => {
+    expect(Number((await rows(laura, "select financial_pct from cost_settings"))[0].financial_pct)).toBe(5);
+    await asUser(db, laura, (tx) => tx.query("update cost_settings set financial_pct = 4.5 where organization_id = $1", [org]));
+    expect(Number((await rows(laura, "select financial_pct from cost_settings"))[0].financial_pct)).toBe(4.5);
+    expect(await errorAs(db, laura, (tx) => tx.query("update cost_settings set financial_pct = 80 where organization_id = $1", [org]))).toMatch(/check/);
+  });
+
+  it("Taller no puede leer ni cambiar tarifas ni gasto financiero, y no los recibe en taller_workspace", async () => {
+    expect(await rows(juan, "select * from hour_rates")).toHaveLength(0);
+    expect(await rows(juan, "select * from cost_settings")).toHaveLength(0);
+    expect(await rows(juan, "update hour_rates set hourly_rate = 1 where organization_id = $1 returning id", [org])).toHaveLength(0);
+    expect(await errorAs(db, juan, (tx) => tx.query("insert into hour_rates (organization_id, id, name, hourly_rate, kind) values ($1, 'x', 'x', 1, 'labor')", [org]))).toMatch(
+      /row-level security/,
+    );
+    const [{ ws }] = await rows(juan, "select taller_workspace() as ws");
+    const text = JSON.stringify(ws);
+    expect(text).not.toContain("hourly_rate");
+    expect(text).not.toContain("financial");
+    expect(text).not.toContain("19000");
+    expect(text).not.toContain("27000");
+    expect(await rows(outsider, "select * from hour_rates")).toHaveLength(0);
+  });
+
+  it("el mapeo de categorías de la base coincide con el de la app", async () => {
+    const cases: Array<[string, string]> = [
+      ["materials", "Melamina"],
+      ["labor", "Horas"],
+      ["machines", "Máquina: Seccionadora"],
+      ["outsourcing", "Laqueado"],
+      ["finishing", "Pintura"],
+      ["logistics", "Flete"],
+      ["installation", "Instalación en obra"],
+      ["contingency", "Varios"],
+      ["other", "Máquina: CNC"],
+      ["other", "Varios"],
+    ];
+    for (const [category, description] of cases) {
+      const [{ c }] = (await db.query<{ c: string }>("select private.legacy_category($1, $2) as c", [category, description])).rows;
+      expect(c, `${category} / ${description}`).toBe(normalizeCategory(category, description));
+    }
+  });
+
+  it("el rubro de una línea vieja sale de la categoría o de la descripción (sin inventar en horas)", async () => {
+    const rubro = async (category: string, description: string) =>
+      (await db.query<{ r: string | null }>("select private.legacy_rubro($1, $2) as r", [category, description])).rows[0].r;
+    expect(await rubro("logistics", "Flete a Recoleta")).toBe("transporte");
+    expect(await rubro("installation", "Instalación en local")).toBe("montaje");
+    expect(await rubro("contingency", "Varios")).toBe("imprevistos");
+    expect(await rubro("outsourcing", "Laqueado barra — Taller Colores")).toBe("pintura");
+    expect(await rubro("outsourcing", "Vidrios templados")).toBe("vidrios");
+    expect(await rubro("outsourcing", "Impresión y ploteo de gráfica")).toBe("graficas");
+    expect(await rubro("materials", "Herraje bisagra")).toBe("herrajes");
+    expect(await rubro("materials", "Perfil aluminio")).toBe("carpinteria_metalica");
+    expect(await rubro("materials", "Melamina blanca 18 mm")).toBe("carpinteria_madera");
+    expect(await rubro("labor", "Horas de taller")).toBeNull();
+    expect(await rubro("machines", "Máquina: Seccionadora")).toBeNull();
+  });
+
+  it("convierte datos viejos sin perder importes (incluye proyectos cerrados y el presupuesto base)", async () => {
+    const p = seed.projects.find((x) => x.status === "completed")!;
+    // Simula filas escritas con las categorías anteriores (carga masiva: así las dejó la versión vieja).
+    await db.exec(`
+      begin;
+      select set_config('blerp.bulk', 'on', true);
+      insert into budget_lines (organization_id, id, project_id, category, description, quantity, unit, unit_cost, total)
+        values ('${org}', 'bl-old-1', '${p.id}', 'logistics', 'Flete', null, 'global', 1000, 1000),
+               ('${org}', 'bl-old-2', '${p.id}', 'machines', 'Máquina: Seccionadora', 2, 'h', 500, 1000);
+      insert into actual_entries (organization_id, id, project_id, date, type, category, description, amount, created_by)
+        values ('${org}', 'act-old-1', '${p.id}', '2026-01-05', 'installation', 'installation', 'Instalación', 777, 'Laura');
+      update projects set baseline = jsonb_set(baseline, '{lines,0,category}', '"outsourcing"') where organization_id = '${org}' and id = '${p.id}';
+      commit;
+    `);
+    await db.exec(conversionSql("20261013120000_lote4_rubros.sql")); // la conversión se puede volver a correr sin efectos extra
+    const lines = (await db.query<{ id: string; category: string; rubro: string | null; total: string }>("select id, category, rubro, total from budget_lines where id like 'bl-old-%' order by id")).rows;
+    expect(lines.map((l) => [l.id, l.category, l.rubro, Number(l.total)])).toEqual([
+      ["bl-old-1", "transport", "transporte", 1000],
+      ["bl-old-2", "labor", null, 1000],
+    ]);
+    const [entry] = (await db.query<{ category: string; amount: string }>("select category, amount from actual_entries where id = 'act-old-1'")).rows;
+    expect([entry.category, Number(entry.amount)]).toEqual(["labor", 777]);
+    const [{ c }] = (await db.query<{ c: string }>("select baseline -> 'lines' -> 0 ->> 'category' as c from projects where organization_id = $1 and id = $2", [org, p.id])).rows;
+    expect(c).toBe("materials");
+  });
+});
+
+describe("Lote 4b · Diseño y Administración por separado", () => {
+  it("las líneas de Administración y diseño van a Diseño solo si lo indican; si no, a Administración", async () => {
+    const p = seed.projects.find((x) => x.status === "completed")!;
+    await db.exec(`
+      begin;
+      select set_config('blerp.bulk', 'on', true);
+      insert into budget_lines (organization_id, id, project_id, category, description, quantity, unit, unit_cost, total, hour_rate_id)
+        values ('${org}', 'bl-ad-1', '${p.id}', 'admin', 'Carpintería madera: horas administrativas / diseño', 10, 'h', 27000, 270000, 'admin'),
+               ('${org}', 'bl-ad-2', '${p.id}', 'admin', 'Diseño de planos', 4, 'h', 25000, 100000, 'admin'),
+               ('${org}', 'bl-ad-3', '${p.id}', 'admin', 'Gestoría', null, 'global', 5000, 5000, null);
+      insert into actual_entries (organization_id, id, project_id, date, type, category, description, amount, created_by)
+        values ('${org}', 'act-ad-1', '${p.id}', '2026-01-05', 'other', 'admin', 'Renders y diseño', 900, 'Laura'),
+               ('${org}', 'act-ad-2', '${p.id}', '2026-01-05', 'other', 'admin', 'Comisión bancaria', 300, 'Laura');
+      update projects set baseline = jsonb_set(baseline, '{lines,0}', baseline -> 'lines' -> 0 || '{"category": "admin", "description": "Diseño 3D"}')
+        where organization_id = '${org}' and id = '${p.id}';
+      commit;
+    `);
+    const before = (await db.query<{ n: string; s: string }>("select count(*) n, sum(total) s from budget_lines where organization_id = $1", [org])).rows[0];
+    await db.exec(conversionSql("20261014120000_lote4b_diseno_administracion.sql"));
+    const after = (await db.query<{ n: string; s: string }>("select count(*) n, sum(total) s from budget_lines where organization_id = $1", [org])).rows[0];
+    expect(after).toEqual(before);
+    const lines = (await db.query<{ id: string; category: string; hour_rate_id: string | null; unit_cost: string }>(
+      "select id, category, hour_rate_id, unit_cost from budget_lines where id like 'bl-ad-%' order by id",
+    )).rows;
+    expect(lines.map((l) => [l.id, l.category, l.hour_rate_id, Number(l.unit_cost)])).toEqual([
+      ["bl-ad-1", "admin", "admin", 27_000], // dice las dos cosas: no se inventa → Administración
+      ["bl-ad-2", "design", "design", 25_000], // la tarifa queda congelada
+      ["bl-ad-3", "admin", null, 5_000],
+    ]);
+    const entries = (await db.query<{ category: string }>("select category from actual_entries where id like 'act-ad-%' order by id")).rows;
+    expect(entries.map((e) => e.category)).toEqual(["design", "admin"]);
+    const [{ c }] = (await db.query<{ c: string }>("select baseline -> 'lines' -> 0 ->> 'category' as c from projects where organization_id = $1 and id = $2", [org, p.id])).rows;
+    expect(c).toBe("design");
+  });
+
+  it("cada empresa tiene los tres tipos de hora; Diseño arranca con la tarifa que tenía Administración", async () => {
+    const orgs = (await db.query<{ organization_id: string; ids: string[] }>(
+      "select organization_id, array_agg(id order by position) ids from hour_rates group by organization_id",
+    )).rows;
+    expect(orgs.length).toBeGreaterThan(0);
+    for (const o of orgs) expect(o.ids).toEqual(["labor", "design", "admin"]);
+  });
+
+  it("Taller no ve las tarifas de Diseño ni de Administración", async () => {
+    expect(await rows(juan, "select * from hour_rates where kind in ('design', 'admin')")).toHaveLength(0);
+    const [{ ws }] = await rows(juan, "select taller_workspace() as ws");
+    expect(JSON.stringify(ws)).not.toContain("design");
   });
 });

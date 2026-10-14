@@ -9,6 +9,7 @@ import type {
   ActualEntry,
   ActualEntryType,
   BudgetCategory,
+  RubroId,
   BudgetLine,
   MaterialSource,
   MaterialUsageEntry,
@@ -19,7 +20,8 @@ import type {
   ReusableMaterial,
   StageLog,
 } from "@/types";
-import { ACTUAL_TYPE_LABELS, ACTUAL_TYPE_TO_CATEGORY, DEMO_USERS, MATERIAL_CATALOG, STATUS_LABELS, STATUS_ORDER } from "./constants";
+import { ACTUAL_TYPE_LABELS, DEMO_USERS, MATERIAL_CATALOG, STATUS_LABELS, STATUS_ORDER, type OtherCostCategory } from "./constants";
+import { actualInputCategory } from "./project-operations";
 import { budgetLineTotal } from "./calculations";
 import { toISODate } from "./formatting";
 import { activityTimeline, actualMessage, leftoverMessage, purchaseMessage, usageMessage } from "./activity";
@@ -33,7 +35,10 @@ const PLANTA = DEMO_USERS.workshop.name;
 interface BudgetSpec {
   materials: Array<[materialId: string, qty: number, unitCost: number]>;
   labor?: [hours: number, rate: number];
-  direct?: Partial<Record<Exclude<BudgetCategory, "materials" | "labor">, number>>;
+  /** Horas de diseño y de administración del rubro Carpintería madera: [horas, tarifa]. */
+  hours?: Partial<Record<"design" | "admin", [hours: number, rate: number]>>;
+  /** Importes globales por rubro (como los cargaría el Cotizador). */
+  direct?: Partial<Record<keyof typeof DIRECT_LINES, number>>;
 }
 
 type UsageSpec = [
@@ -48,7 +53,15 @@ type UsageSpec = [
 ];
 type PurchaseSpec = [dayOffset: number, materialId: string, qty: number, unitCost: number, supplier?: string];
 type LaborSpec = [dayOffset: number, role: string, worker: string, hours: number, rate: number];
-type CostSpec = [dayOffset: number, type: Exclude<ActualEntryType, "labor">, description: string, amount: number, supplier?: string];
+type CostSpec = [
+  dayOffset: number,
+  type: Exclude<ActualEntryType, "labor">,
+  description: string,
+  amount: number,
+  supplier?: string,
+  /** Solo "other": Diseño, Administración o Gasto financiero. */
+  category?: OtherCostCategory,
+];
 
 interface ProjectSpec {
   id: string;
@@ -70,13 +83,12 @@ interface ProjectSpec {
   closedAt?: number;
 }
 
-const DIRECT_LABELS: Record<Exclude<BudgetCategory, "materials" | "labor">, string> = {
-  machines: "Uso de máquinas",
-  outsourcing: "Tercerizaciones (pintura, laqueado, vidrio)",
-  logistics: "Flete y logística",
-  installation: "Instalación en obra",
-  contingency: "Imprevistos",
-};
+const DIRECT_LINES = {
+  bought: { category: "materials", rubro: "pintura", description: "Pintura / Laqueados: trabajo comprado hecho" },
+  transport: { category: "transport", rubro: "transporte", description: "Transporte / Fletes" },
+  montaje: { category: "labor", rubro: "montaje", description: "Montaje: instalación en obra" },
+  contingency: { category: "contingency", rubro: "imprevistos", description: "Imprevistos" },
+} as const satisfies Record<string, { category: BudgetCategory; rubro: RubroId; description: string }>;
 
 function material(id: string) {
   const m = MATERIAL_CATALOG.find((x) => x.id === id);
@@ -124,6 +136,7 @@ class SeedBuilder {
       return {
         id: this.id("bl"),
         category: "materials",
+        rubro: m.rubro,
         description: m.name,
         materialId: m.id,
         unit: m.unit,
@@ -136,18 +149,35 @@ class SeedBuilder {
       lines.push({
         id: this.id("bl"),
         category: "labor",
-        description: "Horas de taller (corte, armado, oficina técnica)",
+        rubro: "carpinteria_madera",
+        description: "Carpintería madera: mano de obra (corte, armado)",
         quantity: hours,
         unit: "h",
         unitCost: rate,
         total: budgetLineTotal({ quantity: hours, unitCost: rate }),
       });
     }
-    for (const [cat, amount] of Object.entries(spec.direct ?? {}) as Array<[keyof typeof DIRECT_LABELS, number]>) {
+    for (const [category, [hours, rate]] of Object.entries(spec.hours ?? {}) as Array<["design" | "admin", [number, number]]>) {
       lines.push({
         id: this.id("bl"),
-        category: cat,
-        description: DIRECT_LABELS[cat],
+        category,
+        rubro: "carpinteria_madera",
+        description: `Carpintería madera: horas de ${category === "design" ? "diseño" : "administración"}`,
+        quantity: hours,
+        unit: "h",
+        unitCost: rate,
+        total: budgetLineTotal({ quantity: hours, unitCost: rate }),
+        hourRateId: category,
+        hourType: "normal",
+      });
+    }
+    for (const [key, amount] of Object.entries(spec.direct ?? {}) as Array<[keyof typeof DIRECT_LINES, number]>) {
+      const d = DIRECT_LINES[key];
+      lines.push({
+        id: this.id("bl"),
+        category: d.category,
+        rubro: d.rubro,
+        description: d.description,
         quantity: null,
         unit: "global",
         unitCost: amount,
@@ -272,13 +302,13 @@ class SeedBuilder {
       ev(off, "cost", worker, actualMessage(e), 18);
     }
 
-    for (const [off, type, description, amount, supplier] of spec.costs ?? []) {
+    for (const [off, type, description, amount, supplier, category] of spec.costs ?? []) {
       const e: ActualEntry = {
         id: this.id("act"),
         projectId: p.id,
         date: this.day(off),
         type,
-        category: ACTUAL_TYPE_TO_CATEGORY[type],
+        category: actualInputCategory({ type, category }),
         description: description || ACTUAL_TYPE_LABELS[type],
         amount,
         supplier,
@@ -354,7 +384,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["bisagra", 60, 2_300],
         ],
         labor: [80, 14_000],
-        direct: { outsourcing: 300_000, logistics: 200_000, installation: 400_000, contingency: 300_000 },
+        direct: { bought: 300_000, transport: 200_000, montaje: 400_000, contingency: 300_000 },
       },
       purchases: [
         [-160, "mel-grafito-18", 16, 60_000, "Maderera Oeste"],
@@ -402,7 +432,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["tapacanto", 900, 900],
         ],
         labor: [180, 13_000],
-        direct: { logistics: 350_000, installation: 900_000, contingency: 400_000 },
+        direct: { transport: 350_000, montaje: 900_000, contingency: 400_000 },
       },
       purchases: [
         [-130, "mel-blanca-18", 52, 46_000, "Placas del Plata"],
@@ -448,7 +478,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["perfil-alu", 24, 14_000],
         ],
         labor: [60, 13_000],
-        direct: { outsourcing: 250_000, logistics: 120_000, contingency: 94_000 },
+        direct: { bought: 250_000, transport: 120_000, contingency: 94_000 },
       },
       purchases: [
         [-105, "mdf-18", 14, 78_000, "Placas del Plata"],
@@ -488,7 +518,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["tapacanto", 500, 950],
         ],
         labor: [130, 14_000],
-        direct: { outsourcing: 450_000, logistics: 250_000, installation: 600_000, contingency: 300_000 },
+        direct: { bought: 450_000, transport: 250_000, montaje: 600_000, contingency: 300_000 },
       },
       purchases: [
         [-88, "mel-blanca-18", 34, 48_000, "Placas del Plata"],
@@ -540,7 +570,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["tapacanto", 400, 1_000],
         ],
         labor: [100, 15_000],
-        direct: { outsourcing: 600_000, logistics: 300_000, installation: 500_000, contingency: 300_000 },
+        direct: { bought: 600_000, transport: 300_000, montaje: 500_000, contingency: 300_000 },
       },
       purchases: [
         [-34, "mel-blanca-18", 12, 50_000, "Placas del Plata"],
@@ -571,7 +601,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
         [-5, "Armado", "Diego Sosa", 40, 12_500],
       ],
       costs: [
-        [-9, "outsourcing", "Laqueado de frentes — Taller Colores", 600_000, "Taller Colores"],
+        [-9, "outsourcing", "Laqueado de frentes — Taller Colores", 750_000, "Taller Colores"],
         [-7, "logistics", "Flete de placas y traslado a obra", 350_000],
         [-6, "unexpected", "Reposición de frente dañado", 120_000],
       ],
@@ -599,7 +629,8 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["tapacanto", 600, 1_000],
         ],
         labor: [150, 14_000],
-        direct: { logistics: 300_000, installation: 700_000, contingency: 350_000 },
+        hours: { design: [16, 27_000], admin: [8, 27_000] },
+        direct: { transport: 300_000, montaje: 700_000, contingency: 350_000 },
       },
       purchases: [
         [-18, "mel-blanca-18", 36, 50_000, "Placas del Plata"],
@@ -614,6 +645,10 @@ export function buildSeed(now: Date = new Date()): SeedState {
       labor: [
         [-12, "Carpintería", "Juan Pérez", 35, 14_000],
         [-4, "Armado", "Diego Sosa", 25, 14_000],
+      ],
+      costs: [
+        [-15, "other", "Planos de taller y renders", 486_000, "Estudio Línea", "design"],
+        [-10, "other", "Gestión de compras y permisos", 162_000, undefined, "admin"],
       ],
     }),
   );
@@ -638,7 +673,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["tapacanto", 300, 1_000],
         ],
         labor: [70, 14_000],
-        direct: { outsourcing: 380_000, logistics: 400_000, contingency: 140_000 },
+        direct: { bought: 380_000, transport: 400_000, contingency: 140_000 },
       },
       purchases: [
         [-25, "mdf-18", 22, 82_000, "Maderera Oeste"],
@@ -678,7 +713,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["perfil-alu", 30, 15_000],
         ],
         labor: [110, 14_000],
-        direct: { outsourcing: 900_000, logistics: 250_000, installation: 600_000, contingency: 310_000 },
+        direct: { bought: 900_000, transport: 250_000, montaje: 600_000, contingency: 310_000 },
       },
       purchases: [
         [-40, "mdf-18", 18, 80_000, "Maderera Oeste"],
@@ -722,7 +757,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["perfil-alu", 20, 15_000],
         ],
         labor: [50, 14_000],
-        direct: { outsourcing: 450_000, logistics: 200_000, installation: 300_000, contingency: 110_000 },
+        direct: { bought: 450_000, transport: 200_000, montaje: 300_000, contingency: 110_000 },
       },
       purchases: [
         [-20, "fenolico", 4, 72_000, "Maderera Oeste"],
@@ -760,7 +795,8 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["tapacanto", 350, 1_000],
         ],
         labor: [90, 14_000],
-        direct: { logistics: 200_000, installation: 400_000, contingency: 250_000 },
+        hours: { design: [10, 27_000], admin: [6, 27_000] },
+        direct: { transport: 200_000, montaje: 400_000, contingency: 250_000 },
       },
     }),
   );
@@ -787,7 +823,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["corredera", 60, 12_500],
         ],
         labor: [140, 14_000],
-        direct: { outsourcing: 500_000, logistics: 350_000, installation: 700_000, contingency: 390_000 },
+        direct: { bought: 500_000, transport: 350_000, montaje: 700_000, contingency: 390_000 },
       },
       purchases: [
         [-3, "mel-blanca-18", 32, 51_000, "Placas del Plata"],
@@ -817,7 +853,8 @@ export function buildSeed(now: Date = new Date()): SeedState {
           ["perfil-alu", 30, 15_000],
         ],
         labor: [60, 14_000],
-        direct: { outsourcing: 400_000, logistics: 250_000, installation: 350_000, contingency: 150_000 },
+        hours: { design: [12, 27_000], admin: [4, 27_000] },
+        direct: { bought: 400_000, transport: 250_000, montaje: 350_000, contingency: 150_000 },
       },
     }),
   );

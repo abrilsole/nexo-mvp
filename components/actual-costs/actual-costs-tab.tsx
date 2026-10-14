@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { Receipt } from "lucide-react";
 import type { BudgetCategory, Project } from "@/types";
-import { ACTUAL_TYPE_LABELS, CATEGORY_LABELS, CATEGORY_ORDER, SOURCE_LABELS } from "@/lib/constants";
+import { actualEntryLabel, CATEGORY_LABELS, CATEGORY_ORDER, SOURCE_LABELS } from "@/lib/constants";
 import { usageProjectCost } from "@/lib/calculations";
 import { formatCurrency, formatDate, formatNumber, formatQty } from "@/lib/formatting";
 import { Card } from "@/components/ui/card";
@@ -42,7 +42,7 @@ export function ActualCostsTab({ project }: { project: Project }) {
       id: e.id,
       date: e.date,
       createdAt: e.createdAt,
-      type: ACTUAL_TYPE_LABELS[e.type],
+      type: actualEntryLabel(e),
       description: e.description + (e.supplier ? ` · ${e.supplier}` : ""),
       category: e.category,
       qty: e.labor ? `${formatNumber(e.labor.hours, 1)} h × ${formatCurrency(e.labor.hourlyCost)}` : "—",

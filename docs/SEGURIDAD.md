@@ -38,6 +38,33 @@ Migración `20261010120000_lote3_operarios_horas_extra.sql` (aplicada el 8/10/20
 - El multiplicador de horas extra vive en `cost_settings`, con políticas solo para Gestión. No va en `organizations.alert_settings` porque la empresa la leen también los operarios activos.
 - Tests en `tests/db/rls.test.ts` ("Lote 3"): Gestión guarda y ajusta; Taller y otra empresa no ven ni modifican nada.
 
+## Lote 4: rubros, tarifas y gasto financiero
+
+Migración `20261013120000_lote4_rubros.sql` (aplicada el 13/10/2026, sin DROP):
+
+- **`hour_rates`** (nueva): tipos de hora y tarifa por hora. RLS: solo Gestión lee, crea y modifica. Taller no la lee y `taller_workspace()` no la incluye.
+- **`cost_settings.financial_pct`** (nueva columna): gasto financiero. La tabla ya era solo de Gestión (Lote 3).
+- **`budget_lines.rubro` y `hour_rate_id`** (nuevas columnas): tabla solo de Gestión.
+- Funciones `private.legacy_category` y `private.legacy_rubro`: solo se usan en la conversión de datos. No tienen permiso para usuarios de la app.
+- Tests en `tests/db/rls.test.ts` ("Lote 4"):
+  - Gestión carga y cambia tarifas y gasto financiero.
+  - Taller y otra empresa no leen ni cambian tarifas ni costos, y `taller_workspace()` no trae ninguna tarifa.
+  - El mapeo de categorías de la base coincide con el de la app.
+  - La conversión no cambia importes, incluido el presupuesto base de proyectos cerrados.
+- El asesor de seguridad de Supabase no marca nada nuevo (siguen solo los dos avisos ya conocidos de abajo).
+
+## Lote 4b: Diseño y Administración
+
+Migración `20261014120000_lote4b_diseno_administracion.sql` (aplicada el 14/10/2026, sin DROP):
+
+- `hour_rates` suma la columna `kind` (labor / design / admin) y el tipo de hora Diseño. Las políticas no cambian: solo Gestión lee y escribe.
+- La columna vieja `category` queda en desuso; se explica en `docs/DECISIONES_RUBROS.md`.
+- Función `private.design_or_admin`: solo para la conversión de datos. No tiene permiso para usuarios de la app.
+- Tests en `tests/db/rls.test.ts` ("Lote 4b"):
+  - el mapeo de líneas, costos reales y presupuesto base, con los mismos totales antes y después;
+  - cada empresa tiene los tres tipos de hora;
+  - Taller no ve las tarifas de Diseño ni de Administración.
+
 ## Cómo verificarlo
 
 ### 1. Tests automáticos (sin tocar la base real)

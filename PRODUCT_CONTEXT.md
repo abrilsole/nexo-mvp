@@ -23,7 +23,7 @@ Hipótesis de *early adopter*, a validar y no presentada como un hecho:
 
 - Entre 5 y 50 empleados.
 - Varios proyectos simultáneos, cada uno con su propia cotización.
-- Uso intensivo de materiales, mano de obra, tercerizaciones, instalación y logística.
+- Uso intensivo de materiales, mano de obra, trabajos comprados hechos, montaje y fletes.
 - Desperdicios y sobrantes.
 - Gestión en Excel, Google Sheets o sistemas fragmentados.
 
@@ -143,17 +143,25 @@ Rentabilidad = ganancia sobre el precio de venta: (precio de venta − costo) / 
 | Puntos de rentabilidad | Diferencia entre dos rentabilidades (nunca "%" ni "pp"). |
 | Comprado ≠ Consumido ≠ Desperdicio ≠ Sobrante | Siempre se muestran por separado. Solo consumido + desperdicio es costo. |
 
-Las siete categorías de costo, iguales en todas las pantallas: **Materiales, Mano de obra, Máquinas, Tercerizaciones, Logística, Instalación, Imprevistos.** Los registros viejos de "Terminaciones" se cuentan en Tercerizaciones; los de "Otros", en Máquinas si eran líneas de máquina y si no en Imprevistos.
+Desde el Lote 4 la cotización se arma por **rubros** (Carpintería madera, Carpintería metálica, Plásticos, Vidrios, Instalación eléctrica, Pintura / Laqueados, Herrajes, Gráficas, Insumos, Transporte / Fletes, Embalaje, Montaje, Imprevistos) y se reporta en siete **categorías**, iguales en todas las pantallas: **Materiales, Mano de obra, Diseño, Administración, Transporte y fletes, Gasto financiero, Imprevistos.** El uso de máquina está incluido en la mano de obra. El mapeo de las siete categorías anteriores y los supuestos a confirmar con el cliente están en `docs/DECISIONES_RUBROS.md`.
+
+| Término | Significado |
+|---|---|
+| Rubro | Sector de la cotización. Cada línea del costo presupuestado guarda su rubro. |
+| Tipo de hora / tarifa | Mano de obra, Diseño o Administración, cada uno con su tarifa por hora (Configuración). Cada cotización guarda la tarifa vigente. |
+| Días de trabajo estimados | Horas por operario / jornada, sumando los rubros uno detrás de otro (supuesto conservador, a confirmar). |
+| Fecha de entrega comprometida | La que se le promete al cliente. Si los días de trabajo no entran, la diferencia se calcula como horas extra. |
+| Gasto financiero | % sobre el precio de venta. Es un costo, no un rubro. |
 
 ## Decisiones tomadas (oct 2026)
 
-- **D1.** Las horas de la etapa Instalación van a la categoría Instalación; el resto, a Mano de obra.
+- **D1.** ~~Las horas de la etapa Instalación van a la categoría Instalación~~. Reemplazada en el Lote 4: ya no existe la categoría Instalación; todas las horas van a Mano de obra (el montaje es el rubro Montaje).
 - **D2.** Solo se compra desde la etapa Compras.
 - **D3.** El consumo se valoriza al costo del lote del que sale.
 - **D4.** El mínimo para estimar con el modelo es 10 proyectos comparables (el modelo todavía no existe).
 - **D5.** El proyecto referencia un id de cliente.
 
-D1, D2 y D5 se implementan en lotes posteriores.
+D2 y D5 se implementan en lotes posteriores.
 
 ## Pendientes anotados
 

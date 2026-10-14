@@ -11,6 +11,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import type {
   AlertSettings,
   CostSettings,
+  HourRate,
   AppMode,
   AppRole,
   Attachment,
@@ -20,7 +21,7 @@ import type {
   ProjectStatus,
   StockLot,
 } from "@/types";
-import { DEFAULT_SETTINGS } from "@/lib/constants";
+import { DEFAULT_HOUR_RATES, DEFAULT_SETTINGS } from "@/lib/constants";
 import { buildSeed } from "@/lib/seed-data";
 import * as ops from "@/lib/project-operations";
 import * as people from "@/lib/operators";
@@ -46,6 +47,8 @@ interface AppState {
   settings: AlertSettings;
   /** Multiplicador de horas extra (solo Gestión). */
   costSettings: CostSettings;
+  /** Tipos de hora con su tarifa (solo Gestión). */
+  hourRates: HourRate[];
   currentMode: AppMode;
   resolvedAlertIds: string[];
 
@@ -134,6 +137,8 @@ interface AppState {
   updateSettings: (patch: Partial<AlertSettings>) => void;
   resetSettings: () => void;
   updateCostSettings: (patch: Partial<CostSettings>) => Result;
+  /** Cambia la tarifa de un tipo de hora. Las cotizaciones ya guardadas conservan la tarifa con la que se hicieron. */
+  updateHourRate: (id: string, hourlyRate: number) => Result;
   /** Reemplaza los datos de la empresa por la demo de Madera Sur. */
   resetDemo: () => Promise<Result>;
   /** Borra todos los datos de la empresa para empezar de cero. */
@@ -297,6 +302,7 @@ export const useAppStore = create<AppState>()(
       return {
         ...EMPTY_DATA,
         costSettings: { ...DEFAULT_COST_SETTINGS },
+        hourRates: DEFAULT_HOUR_RATES.map((r) => ({ ...r })),
         currentMode: "management",
         organizationId: null,
         organizationName: "",
@@ -316,6 +322,7 @@ export const useAppStore = create<AppState>()(
             requests: ws.requests,
             settings: ws.settings,
             costSettings: ws.costSettings,
+            hourRates: ws.hourRates,
             resolvedAlertIds: ws.resolvedAlertIds,
             organizationId: ws.organizationId,
             organizationName: ws.organizationName,
@@ -556,8 +563,19 @@ export const useAppStore = create<AppState>()(
           if (!(costSettings.overtimeMultiplier >= 1 && costSettings.overtimeMultiplier <= 5)) {
             return { ok: false, error: "El multiplicador de horas extra tiene que estar entre 1 y 5." };
           }
+          if (!(costSettings.financialPct >= 0 && costSettings.financialPct < 50)) {
+            return { ok: false, error: "El gasto financiero tiene que estar entre 0% y 50%." };
+          }
           set({ costSettings });
           void persistRemote((db, org) => remote.saveCostSettings(db, org, costSettings));
+          return { ok: true, value: undefined };
+        },
+        updateHourRate: (id, hourlyRate) => {
+          if (!(hourlyRate > 0)) return { ok: false, error: "La tarifa tiene que ser mayor a cero." };
+          if (!get().hourRates.some((r) => r.id === id)) return { ok: false, error: "Tipo de hora no encontrado." };
+          const hourRates = get().hourRates.map((r) => (r.id === id ? { ...r, hourlyRate } : r));
+          set({ hourRates });
+          void persistRemote((db, org) => remote.saveHourRates(db, org, hourRates));
           return { ok: true, value: undefined };
         },
 

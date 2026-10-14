@@ -13,20 +13,31 @@ export type ProjectStatus =
   | "installation"
   | "completed";
 
-/** Las siete categorías de costo. Son las mismas en todas las pantallas. */
-export type BudgetCategory =
-  | "materials"
-  | "labor"
-  | "machines"
-  | "outsourcing"
-  | "logistics"
-  | "installation"
-  | "contingency";
+/**
+ * Categorías de reporte (Lote 4). Se derivan de los rubros de la cotización y son las mismas en todas las pantallas.
+ * Las siete anteriores se normalizan al leer (ver normalizeCategory).
+ */
+export type BudgetCategory = "materials" | "labor" | "design" | "admin" | "transport" | "financial" | "contingency";
+
+/** Rubros (sectores) del catálogo cerrado de la cotización. */
+export type RubroId =
+  | "carpinteria_madera"
+  | "carpinteria_metalica"
+  | "plasticos"
+  | "vidrios"
+  | "instalacion_electrica"
+  | "pintura"
+  | "herrajes"
+  | "graficas"
+  | "insumos"
+  | "transporte"
+  | "embalaje"
+  | "montaje"
+  | "imprevistos";
 
 /**
- * Tipo de un costo real (no material). Los valores coinciden con la base de datos:
- * "other" se usa para el uso de máquinas y "finishing" solo existe en registros viejos
- * (se imputa en Tercerizaciones).
+ * Tipo de un costo real (no material). Los valores coinciden con la base de datos.
+ * "finishing" y el uso de máquinas ("other" con categoría Máquinas) solo existen en registros viejos.
  */
 export type ActualEntryType =
   | "labor"
@@ -66,11 +77,13 @@ export interface BudgetLine {
   unitCost: number;
   total: number;
   notes?: string;
-  /** Mano de obra del Cotizador: operario asignado (su costo por hora es unitCost). */
+  /** Rubro de la cotización. Vacío solo en líneas anteriores al Lote 4 sin rubro reconocible. */
+  rubro?: RubroId;
+  /** Horas: tipo de hora cuya tarifa se usó. La tarifa queda congelada en unitCost. */
+  hourRateId?: string;
+  /** Operario asignado. El Cotizador ya no lo usa (Lote 4); queda para que el jefe de planta asigne (Lote 5). */
   operatorId?: string;
-  /** Rol de la mano de obra (Carpintero, Lustrador…). */
-  laborRole?: string;
-  /** "overtime" = horas extra: unitCost ya es costo por hora × multiplicador. */
+  /** "overtime" = horas extra: unitCost ya es tarifa × multiplicador. */
   hourType?: "normal" | "overtime";
   /** Multiplicador usado en las horas extra (trazabilidad del importe). */
   overtimeMultiplier?: number;
@@ -78,8 +91,24 @@ export interface BudgetLine {
 
 /** Costos de la empresa que solo ve Gestión (Taller nunca los recibe). */
 export interface CostSettings {
-  /** Horas extra = costo por hora × este multiplicador. */
+  /** Horas extra = tarifa por hora × este multiplicador. */
   overtimeMultiplier: number;
+  /** Gasto financiero: % sobre el precio de venta (a confirmar con el cliente). */
+  financialPct: number;
+}
+
+/** Categorías de reporte que pueden tener horas. */
+export type HourCategory = Extract<BudgetCategory, "labor" | "design" | "admin">;
+
+/**
+ * Tipo de hora con su tarifa (Configuración). Es una lista: se pueden sumar tipos sin cambiar el modelo.
+ * `category` dice en qué categoría de reporte caen sus horas.
+ */
+export interface HourRate {
+  id: string;
+  name: string;
+  hourlyRate: number;
+  category: HourCategory;
 }
 
 export interface PurchaseEntry {
@@ -373,6 +402,8 @@ export interface CatalogMaterial {
   unit: string;
   /** Costo de referencia (último conocido). Solo se usa si no hay compra ni presupuesto. */
   referenceCost: number;
+  /** Rubro al que pertenece normalmente. */
+  rubro: RubroId;
 }
 
 export interface AlertSettings {

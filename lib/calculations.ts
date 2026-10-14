@@ -154,7 +154,7 @@ export interface CategoryRow {
   projectedVariance: Variance;
 }
 
-/** Siempre las siete categorías, en el mismo orden (aunque estén en cero). */
+/** Siempre las siete categorías de reporte, en el mismo orden (aunque estén en cero). */
 export function categoryBreakdown(project: Project): CategoryRow[] {
   const b = budgetByCategory(project.budgetLines);
   const a = actualByCategory(project);

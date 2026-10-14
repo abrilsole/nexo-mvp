@@ -1,4 +1,5 @@
-// Lote 3 — operarios, disponibilidad y horas extra en el Cotizador.
+// Lote 3 — capacidad por operario y horas extra (funciones puras). En el Lote 4 la cotización dejó de
+// elegir operarios con nombre; estas funciones quedan para el jefe de planta (Lote 5).
 import { describe, expect, it } from "vitest";
 import type { Operator } from "@/types";
 import {
@@ -12,8 +13,6 @@ import {
   workingDaysBetween,
   type PlanContext,
 } from "@/lib/capacity";
-import { buildBudgetLines, EMPTY_DIRECT, totalOfLines } from "@/lib/budget-calculator";
-import { computeCalculator, initialCalcState, type CalcState } from "@/components/budget/calculator-state";
 import { line, project } from "./helpers";
 
 const op = (id: string, name: string, role: string, hourlyCost: number): Operator => ({
@@ -163,47 +162,5 @@ describe("plan de mano de obra del Cotizador", () => {
     expect(role.operators.map((o) => o.hours)).toEqual([60, 60]);
     expect(role.total).toBe(60 * 10_000 + 60 * 12_000);
     expect(role.shortage).toBe(false);
-  });
-});
-
-describe("de la calculadora al costo presupuestado", () => {
-  it("las horas extra suman a Mano de obra y quedan trazables por operario", () => {
-    const state: CalcState = {
-      ...initialCalcState(),
-      materials: [],
-      contingencyPct: "0",
-      labor: [{ key: "r1", role: "Carpintería", hours: "100", operatorIds: ["op-juan"] }],
-    };
-    const calc = computeCalculator(state, "2026-10-05", "Local comercial", {
-      operators: [JUAN],
-      projects: [],
-      deadline: "2026-10-16",
-      overtimeMultiplier: 2,
-      today: "2026-10-05",
-    });
-    const labor = calc.lines.filter((l) => l.category === "labor");
-    expect(labor.map((l) => [l.operatorId, l.hourType, l.quantity, l.unitCost])).toEqual([
-      ["op-juan", "normal", 80, 10_000],
-      ["op-juan", "overtime", 20, 20_000],
-    ]);
-    expect(calc.total).toBe(1_200_000);
-    expect(calc.labor.roles[0].shortage).toBe(true);
-  });
-
-  it("sin plazo, la misma carga sale toda en horario normal", () => {
-    const lines = buildBudgetLines({
-      materials: [],
-      labor: [{ role: "Carpintería", hours: 100, assignments: [{ operatorId: "op-juan", operatorName: "Juan", hourlyCost: 10_000, normalHours: 100, overtimeHours: 0 }] }],
-      machines: [],
-      direct: EMPTY_DIRECT,
-      contingencyPct: 0,
-      hoursPerDay: 8,
-      installationDays: 0,
-      targetMarginPct: 30,
-      startDate: "2026-10-05",
-      overtimeMultiplier: 2,
-    });
-    expect(lines.every((l) => l.hourType === "normal")).toBe(true);
-    expect(totalOfLines(lines)).toBe(1_000_000);
   });
 });

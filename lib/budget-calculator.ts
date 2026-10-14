@@ -1,68 +1,65 @@
 // ─────────────────────────────────────────────────────────────
-// Calculadora de presupuesto — funciones puras, sin UI ni estado.
+// Cotización por rubros — funciones puras, sin UI ni estado (Lote 4).
 //
-// Convierte supuestos del usuario (materiales, operarios, máquinas,
-// costos directos) en líneas de presupuesto + duración + precio sugerido
-// + sensibilidad al atraso. Todo es una ESTIMACIÓN basada en lo que el
-// usuario carga: no hay datos ocultos ni automatismos.
+// Cada rubro tiene materiales, operarios × horas por operario, horas de
+// diseño y horas de administración (o solo un importe: Transporte / Fletes e
+// Imprevistos). De ahí salen las líneas del costo presupuestado, los días
+// de trabajo, las horas extra, el precio sugerido y la rentabilidad.
+// Todo es una ESTIMACIÓN con lo que carga el usuario: sin datos ocultos.
 // ─────────────────────────────────────────────────────────────
-import type { BudgetCategory } from "@/types";
+import type { BudgetCategory, HourCategory, HourRate, RubroId } from "@/types";
 import type { BudgetLineInput } from "./project-operations";
+import { laborAmount, splitOvertime, workingDaysBetween } from "./capacity";
+import { RUBROS, rubroDef } from "./rubros";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const finite = (n: number) => (Number.isFinite(n) ? n : 0);
+const positive = (n: number) => Math.max(0, finite(n));
 
-export interface CalcMaterial {
+export interface QuoteMaterial {
   /** Id de catálogo si corresponde (permite reconciliar compras y consumos). */
   materialId?: string;
   name: string;
   unit: string;
   quantity: number;
+  /** Para algo que se compra hecho alcanza con cantidad 1 y el costo total acá. */
   unitCost: number;
   /** % extra de desperdicio esperado, se suma a la cantidad presupuestada. */
   wastePct: number;
 }
 
-/** Un operario dentro de un rol: sus horas normales y extra ya calculadas (ver lib/capacity.ts). */
-export interface CalcLaborAssignment {
-  operatorId: string;
-  operatorName: string;
-  hourlyCost: number;
-  normalHours: number;
-  overtimeHours: number;
+/** Un rubro de la cotización. Es un dato plano: un conjunto de rubros se puede guardar como plantilla. */
+export interface QuoteRubro {
+  rubro: RubroId;
+  materials: QuoteMaterial[];
+  /** Cantidad de operarios (sin nombre: el jefe de planta asigna después). */
+  workers: number;
+  hoursPerWorker: number;
+  /** Horas de diseño del rubro (totales, sin nombre). */
+  designHours: number;
+  /** Horas de administración del rubro (totales, sin nombre). */
+  adminHours: number;
+  /** Solo rubros de importe (Transporte / Fletes, Imprevistos). */
+  amount: number;
 }
 
-export interface CalcLabor {
-  role: string;
-  /** Horas totales de trabajo de ese rol (sumando a todos los operarios). */
-  hours: number;
-  assignments: CalcLaborAssignment[];
+export interface QuoteTargets {
+  /** Rentabilidad objetivo de materiales: ganancia sobre el precio de venta, en %. */
+  materialsTargetPct: number;
+  /** Rentabilidad objetivo de mano de obra (incluye diseño y administración: a confirmar), en %. */
+  laborTargetPct: number;
+  /** Gasto financiero: % sobre el precio de venta. */
+  financialPct: number;
 }
 
-export interface CalcMachine {
-  name: string;
-  hours: number;
-  hourlyCost: number;
-}
-
-export interface CalcDirectCosts {
-  outsourcing: number;
-  logistics: number;
-  installation: number;
-}
-
-export interface CalculatorInput {
-  materials: CalcMaterial[];
-  labor: CalcLabor[];
-  machines: CalcMachine[];
-  direct: CalcDirectCosts;
-  /** Imprevistos como % del subtotal. */
-  contingencyPct: number;
+export interface QuoteInput extends QuoteTargets {
+  rubros: QuoteRubro[];
+  /** Jornada diaria por operario, en horas. */
   hoursPerDay: number;
-  installationDays: number;
-  targetMarginPct: number;
   startDate: string;
-  /** Horas extra = costo por hora × multiplicador. */
+  /** Fecha de entrega comprometida (opcional). */
+  deadline: string | null;
+  rates: HourRate[];
   overtimeMultiplier: number;
 }
 
@@ -74,117 +71,200 @@ export interface CalcAdjustment {
   projectType: string;
 }
 
-export const EMPTY_DIRECT: CalcDirectCosts = { outsourcing: 0, logistics: 0, installation: 0 };
+// ── Cantidades y tarifas ──────────────────────────────────────
 
-// ── Cantidades y costos ───────────────────────────────────────
-
-export function materialBudgetQuantity(m: Pick<CalcMaterial, "quantity" | "wastePct">): number {
-  return round2(finite(m.quantity) * (1 + Math.max(0, finite(m.wastePct)) / 100));
+export function materialBudgetQuantity(m: Pick<QuoteMaterial, "quantity" | "wastePct">): number {
+  return round2(finite(m.quantity) * (1 + positive(m.wastePct) / 100));
 }
 
-export function materialCost(m: CalcMaterial): number {
-  return round2(materialBudgetQuantity(m) * finite(m.unitCost));
+/** Tarifa vigente de cada categoría de horas (el primer tipo de hora de esa categoría en la lista). */
+export function ratesByCategory(rates: HourRate[]): RatesByCategory {
+  const out: RatesByCategory = {};
+  for (const r of rates) out[r.category] ??= r;
+  return out;
 }
 
-/** horas normales × costo + horas extra × costo × multiplicador, de todos los operarios del rol. */
-export const laborCost = (l: CalcLabor, overtimeMultiplier: number): number =>
-  round2(
-    l.assignments.reduce(
-      (s, a) => s + finite(a.normalHours) * finite(a.hourlyCost) + finite(a.overtimeHours) * round2(finite(a.hourlyCost) * overtimeMultiplier),
-      0,
-    ),
-  );
-export const machineCost = (m: CalcMachine): number => round2(finite(m.hours) * finite(m.hourlyCost));
+// ── Días de trabajo y horas extra ─────────────────────────────
 
-/** Costo por día laboral de tener a todo el equipo asignado (base de la sensibilidad al atraso). */
-export function dailyCrewCost(labor: CalcLabor[], hoursPerDay: number): number {
-  return round2(labor.reduce((s, l) => s + l.assignments.reduce((a, x) => a + finite(hoursPerDay) * finite(x.hourlyCost), 0), 0));
+export interface WorkSchedule {
+  /** Días de trabajo estimados (horas por operario / jornada, rubro detrás de rubro), sin redondear. */
+  neededDays: number;
+  /** Lo mismo, redondeado hacia arriba a días enteros. */
+  workDays: number;
+  /** Días hábiles desde el inicio hasta la entrega comprometida (null = sin fecha). */
+  availableDays: number | null;
+  /** null = sin fecha de entrega. */
+  fits: boolean | null;
+  /** Parte de las horas que entra en horario normal (1 = todas). Lo demás son horas extra. */
+  normalShare: number;
 }
-
-// ── Líneas de presupuesto ─────────────────────────────────────
 
 /**
- * Genera las líneas de presupuesto. Cada línea es trazable a un supuesto cargado;
- * los ajustes por historial y los imprevistos van como líneas separadas y explícitas.
+ * Supuesto conservador (a confirmar): los rubros se hacen uno detrás de otro. Cada rubro suma
+ * horas por operario / jornada; sus operarios trabajan en paralelo dentro del rubro.
+ * Si con la fecha de entrega no alcanzan los días, la misma proporción de horas de cada rubro
+ * pasa a horas extra (horas disponibles / horas necesarias).
  */
-export function buildBudgetLines(input: CalculatorInput, adjustments: CalcAdjustment[] = []): BudgetLineInput[] {
-  const lines: BudgetLineInput[] = [];
+export function workSchedule(rubros: QuoteRubro[], hoursPerDay: number, startDate: string, deadline: string | null): WorkSchedule {
+  const hpd = positive(hoursPerDay);
+  const neededDays = hpd > 0 ? rubros.filter((r) => r.workers > 0).reduce((s, r) => s + positive(r.hoursPerWorker) / hpd, 0) : 0;
+  const availableDays = deadline ? workingDaysBetween(startDate, deadline) : null;
+  const fits = availableDays === null ? null : neededDays <= availableDays + 1e-9;
+  const normalShare = availableDays === null || neededDays === 0 ? 1 : Math.min(1, availableDays / neededDays);
+  return { neededDays: round2(neededDays), workDays: Math.ceil(neededDays - 1e-9), availableDays, fits, normalShare };
+}
 
-  for (const m of input.materials) {
+export interface RubroLabor {
+  workers: number;
+  hoursPerWorker: number;
+  normalHoursPerWorker: number;
+  overtimeHoursPerWorker: number;
+  normalHours: number;
+  overtimeHours: number;
+  rate: number;
+  overtimeRate: number;
+  normalCost: number;
+  overtimeCost: number;
+  /** Horas de diseño y de administración: sin horas extra (no dependen de los operarios). */
+  design: HourCharge;
+  admin: HourCharge;
+  /** Mano de obra + diseño + administración del rubro. */
+  total: number;
+}
+
+/** Horas totales × tarifa de su tipo de hora. */
+export interface HourCharge {
+  hours: number;
+  rate: number;
+  cost: number;
+}
+
+const hourCharge = (hours: number, rate: number): HourCharge => {
+  const h = positive(hours);
+  const r = positive(rate);
+  return { hours: h, rate: r, cost: round2(h * r) };
+};
+
+/** Horas normales × tarifa + horas extra × tarifa × multiplicador + diseño × su tarifa + administración × su tarifa. */
+export function rubroLabor(
+  r: Pick<QuoteRubro, "workers" | "hoursPerWorker" | "designHours" | "adminHours">,
+  p: { normalShare: number; laborRate: number; designRate: number; adminRate: number; overtimeMultiplier: number },
+): RubroLabor {
+  const workers = Math.max(0, Math.round(finite(r.workers)));
+  const hoursPerWorker = workers > 0 ? positive(r.hoursPerWorker) : 0;
+  const perWorker = splitOvertime(hoursPerWorker, hoursPerWorker * Math.min(1, Math.max(0, p.normalShare)));
+  const normalHours = round2(perWorker.normalHours * workers);
+  const overtimeHours = round2(perWorker.overtimeHours * workers);
+  const labor = laborAmount({ normalHours, overtimeHours, hourlyCost: p.laborRate, multiplier: p.overtimeMultiplier });
+  const design = hourCharge(r.designHours, p.designRate);
+  const admin = hourCharge(r.adminHours, p.adminRate);
+  return {
+    workers,
+    hoursPerWorker,
+    normalHoursPerWorker: perWorker.normalHours,
+    overtimeHoursPerWorker: perWorker.overtimeHours,
+    normalHours,
+    overtimeHours,
+    rate: positive(p.laborRate),
+    overtimeRate: labor.overtimeRate,
+    normalCost: labor.normalCost,
+    overtimeCost: labor.overtimeCost,
+    design,
+    admin,
+    total: round2(labor.total + design.cost + admin.cost),
+  };
+}
+
+// ── Líneas del costo presupuestado ────────────────────────────
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const num = (n: number) => String(round2(n)).replace(".", ",");
+
+/** Líneas de un rubro, cada una trazable a lo cargado. Las horas guardan el tipo de hora y su tarifa vigente. */
+/** Tarifa vigente de cada categoría de horas (undefined = no hay tipo de hora de esa categoría). */
+export type RatesByCategory = Partial<Record<HourCategory, HourRate>>;
+
+const rateNote = (rate: HourRate | undefined) => (rate ? `Tarifa "${rate.name}" vigente al cotizar.` : undefined);
+
+export function rubroLines(r: QuoteRubro, labor: RubroLabor | null, rates: RatesByCategory, overtimeMultiplier: number): BudgetLineInput[] {
+  const def = rubroDef(r.rubro);
+  if (def.kind === "amount") {
+    const amount = positive(r.amount);
+    return amount > 0 && def.amountCategory
+      ? [{ category: def.amountCategory, rubro: r.rubro, description: def.label, quantity: null, unit: "global", unitCost: amount }]
+      : [];
+  }
+  const lines: BudgetLineInput[] = [];
+  for (const m of r.materials) {
     if (!m.name.trim() || !(m.quantity > 0)) continue;
     lines.push({
       category: "materials",
+      rubro: r.rubro,
       description: m.name.trim(),
       materialId: m.materialId,
       quantity: materialBudgetQuantity(m),
       unit: m.unit.trim() || "u",
-      unitCost: finite(m.unitCost),
-      notes: m.wastePct > 0 ? `Incluye ${m.wastePct}% de desperdicio esperado sobre ${m.quantity} ${m.unit}.` : undefined,
+      unitCost: positive(m.unitCost),
+      notes: m.wastePct > 0 ? `Incluye ${num(m.wastePct)}% de desperdicio esperado sobre ${num(m.quantity)} ${m.unit}.` : undefined,
     });
   }
-  // Mano de obra: una línea por operario con sus horas normales y, si hacen falta, otra con sus horas extra.
-  for (const l of input.labor) {
-    const role = l.role.trim();
-    if (!role) continue;
-    for (const a of l.assignments) {
-      const rate = finite(a.hourlyCost);
-      if (a.normalHours > 0) {
-        lines.push({
-          category: "labor",
-          description: `${role}: ${a.operatorName} · horas normales`,
-          quantity: round2(a.normalHours),
-          unit: "h",
-          unitCost: rate,
-          operatorId: a.operatorId,
-          laborRole: role,
-          hourType: "normal",
-        });
-      }
-      if (a.overtimeHours > 0) {
-        const multiplier = Math.max(1, finite(input.overtimeMultiplier));
-        lines.push({
-          category: "labor",
-          description: `${role}: ${a.operatorName} · horas extra (×${String(multiplier).replace(".", ",")})`,
-          quantity: round2(a.overtimeHours),
-          unit: "h",
-          unitCost: round2(rate * multiplier),
-          operatorId: a.operatorId,
-          laborRole: role,
-          hourType: "overtime",
-          overtimeMultiplier: multiplier,
-          notes: `Costo por hora ${rate} × ${multiplier}.`,
-        });
-      }
-    }
-  }
-  for (const m of input.machines) {
-    if (!m.name.trim() || !(m.hours > 0)) continue;
+  if (labor && labor.normalHours > 0) {
     lines.push({
-      category: "machines",
-      description: `Máquina: ${m.name.trim()}`,
-      quantity: finite(m.hours),
+      category: "labor",
+      rubro: r.rubro,
+      description: `${def.label}: mano de obra (${plural(labor.workers, "operario", "operarios")} × ${num(labor.normalHoursPerWorker)} h)`,
+      quantity: labor.normalHours,
       unit: "h",
-      unitCost: finite(m.hourlyCost),
+      unitCost: labor.rate,
+      hourRateId: rates.labor?.id,
+      hourType: "normal",
+      notes: rateNote(rates.labor),
     });
   }
-  const directs: [keyof CalcDirectCosts, BudgetCategory, string][] = [
-    ["outsourcing", "outsourcing", "Tercerizaciones"],
-    ["logistics", "logistics", "Logística"],
-    ["installation", "installation", "Instalación"],
-  ];
-  for (const [key, category, label] of directs) {
-    const amount = finite(input.direct[key]);
-    if (amount > 0) lines.push({ category, description: label, quantity: null, unit: "global", unitCost: amount });
+  if (labor && labor.overtimeHours > 0) {
+    const multiplier = Math.max(1, finite(overtimeMultiplier));
+    lines.push({
+      category: "labor",
+      rubro: r.rubro,
+      description: `${def.label}: horas extra (${plural(labor.workers, "operario", "operarios")} × ${num(labor.overtimeHoursPerWorker)} h, ×${num(multiplier)})`,
+      quantity: labor.overtimeHours,
+      unit: "h",
+      unitCost: labor.overtimeRate,
+      hourRateId: rates.labor?.id,
+      hourType: "overtime",
+      overtimeMultiplier: multiplier,
+      notes: `Tarifa ${num(labor.rate)} × ${num(multiplier)}.`,
+    });
   }
+  const flat: Array<[Extract<HourCategory, "design" | "admin">, HourCharge | undefined, string]> = [
+    ["design", labor?.design, "horas de diseño"],
+    ["admin", labor?.admin, "horas de administración"],
+  ];
+  for (const [category, charge, what] of flat) {
+    if (!charge || !(charge.hours > 0)) continue;
+    lines.push({
+      category,
+      rubro: r.rubro,
+      description: `${def.label}: ${what}`,
+      quantity: charge.hours,
+      unit: "h",
+      unitCost: charge.rate,
+      hourRateId: rates[category]?.id,
+      hourType: "normal",
+      notes: rateNote(rates[category]),
+    });
+  }
+  return lines;
+}
 
-  // Ajustes por historial: línea explícita dentro de la misma categoría.
-  const subtotalByCat = new Map<BudgetCategory, number>();
-  for (const l of lines) subtotalByCat.set(l.category, (subtotalByCat.get(l.category) ?? 0) + (l.quantity === null ? l.unitCost : l.quantity * l.unitCost));
+/** Ajustes por historial: línea explícita dentro de su categoría, sin rubro. */
+export function adjustmentLines(lines: BudgetLineInput[], adjustments: CalcAdjustment[]): BudgetLineInput[] {
+  const out: BudgetLineInput[] = [];
   for (const a of adjustments) {
-    const base = subtotalByCat.get(a.category) ?? 0;
+    const base = totalOfLines(lines.filter((l) => l.category === a.category));
     const amount = round2((base * a.pct) / 100);
     if (amount <= 0) continue;
-    lines.push({
+    out.push({
       category: a.category,
       description: `Ajuste por historial (+${round2(a.pct)}%)`,
       quantity: null,
@@ -193,69 +273,148 @@ export function buildBudgetLines(input: CalculatorInput, adjustments: CalcAdjust
       notes: `Proyectos "${a.projectType}" finalizados (${a.sampleSize}) cerraron en promedio ${round2(a.pct)}% sobre lo presupuestado en esta categoría.`,
     });
   }
+  return out;
+}
 
-  const subtotal = round2(lines.reduce((s, l) => s + (l.quantity === null ? l.unitCost : l.quantity * l.unitCost), 0));
-  const contingency = round2((subtotal * Math.max(0, finite(input.contingencyPct))) / 100);
-  if (contingency > 0) {
-    lines.push({
-      category: "contingency",
-      description: `Imprevistos (${input.contingencyPct}%)`,
-      quantity: null,
-      unit: "global",
-      unitCost: contingency,
-    });
-  }
-  return lines;
+/** Gasto financiero: % sobre el precio de venta. Es un costo, no un rubro. Sin precio todavía no hay línea. */
+export function financialLine(financialPct: number, salesPrice: number): BudgetLineInput | null {
+  const amount = round2((positive(salesPrice) * positive(financialPct)) / 100);
+  if (!(amount > 0)) return null;
+  return {
+    category: "financial",
+    description: `Gasto financiero (${num(financialPct)}% del precio de venta)`,
+    quantity: null,
+    unit: "global",
+    unitCost: amount,
+  };
 }
 
 export function totalOfLines(lines: BudgetLineInput[]): number {
   return round2(lines.reduce((s, l) => s + (l.quantity === null ? l.unitCost : l.quantity * l.unitCost), 0));
 }
 
-// ── Precio y margen ───────────────────────────────────────────
+// ── Resumen por rubro (paso "Revisar y crear") ───────────────
 
-/** Precio de venta que da `marginPct` sobre ese costo. null si el margen es inválido (≥100%) o no hay costo. */
-export function suggestedSalesPrice(cost: number, marginPct: number): number | null {
-  if (!(cost > 0) || !Number.isFinite(marginPct) || marginPct < 0 || marginPct >= 100) return null;
-  return Math.ceil(cost / (1 - marginPct / 100) - 1e-6);
+export interface RubroTableRow {
+  /** Rubro; undefined = ajustes por historial (no tienen rubro). */
+  rubro?: RubroId;
+  materials: number;
+  labor: number;
+  design: number;
+  admin: number;
+  /** Transporte / Fletes e Imprevistos: solo un importe. */
+  amount: number;
+  total: number;
 }
 
-export function marginAt(salesPrice: number, cost: number): number | null {
+export interface RubroTable {
+  rows: RubroTableRow[];
+  financial: number;
+  /** Igual al costo presupuestado (totalOfLines de las mismas líneas). */
+  total: number;
+}
+
+/**
+ * Una fila por rubro con importe (en el orden del catálogo) y, al final, los ajustes por historial.
+ * El gasto financiero va aparte. Cada celda es la suma de líneas del costo presupuestado.
+ */
+export function rubroTable(lines: BudgetLineInput[]): RubroTable {
+  const sum = (ls: BudgetLineInput[], ...cats: BudgetCategory[]) => totalOfLines(ls.filter((l) => cats.includes(l.category)));
+  const row = (ls: BudgetLineInput[], rubro?: RubroId): RubroTableRow => ({
+    rubro,
+    materials: sum(ls, "materials"),
+    labor: sum(ls, "labor"),
+    design: sum(ls, "design"),
+    admin: sum(ls, "admin"),
+    amount: sum(ls, "transport", "contingency"),
+    total: totalOfLines(ls),
+  });
+  const costLines = lines.filter((l) => l.category !== "financial");
+  const rows = [
+    ...RUBROS.map((def) => row(costLines.filter((l) => l.rubro === def.id), def.id)),
+    row(costLines.filter((l) => !l.rubro)),
+  ].filter((r) => r.total !== 0);
+  return { rows, financial: sum(lines, "financial"), total: totalOfLines(lines) };
+}
+
+// ── Precio sugerido y rentabilidad ────────────────────────────
+
+/** Costos agrupados como los usa la fórmula del precio (sin el gasto financiero, que depende del precio). */
+export interface CostGroups {
+  materials: number;
+  /** Mano de obra + diseño + administración (un solo objetivo de rentabilidad: a confirmar). */
+  labor: number;
+  transport: number;
+  contingency: number;
+}
+
+export function costGroups(lines: BudgetLineInput[]): CostGroups {
+  const of = (...cats: BudgetCategory[]) => totalOfLines(lines.filter((l) => cats.includes(l.category)));
+  return { materials: of("materials"), labor: of("labor", "design", "admin"), transport: of("transport"), contingency: of("contingency") };
+}
+
+const costWithoutFinancial = (c: CostGroups) => round2(c.materials + c.labor + c.transport + c.contingency);
+const validPct = (n: number) => Number.isFinite(n) && n >= 0 && n < 100;
+
+function marginAt(salesPrice: number, cost: number): number | null {
   if (!(salesPrice > 0)) return null;
   return ((salesPrice - cost) / salesPrice) * 100;
 }
 
-// ── Duración ──────────────────────────────────────────────────
-
-/** Días laborales de producción: los roles trabajan en paralelo, el más largo marca el plazo. */
-export function productionDays(labor: CalcLabor[], hoursPerDay: number): number {
-  if (!(hoursPerDay > 0)) return 0;
-  const days = labor
-    .filter((l) => l.assignments.length > 0 && l.hours > 0)
-    .map((l) => l.hours / (l.assignments.length * hoursPerDay));
-  return days.length ? Math.ceil(Math.max(...days)) : 0;
+export interface PriceAnalysis {
+  price: number;
+  financialCost: number;
+  /** Costo total con el gasto financiero de ese precio. */
+  totalCost: number;
+  /** Rentabilidad total: (precio − costo total) / precio. */
+  totalMargin: number | null;
 }
 
-export function totalWorkingDays(input: Pick<CalculatorInput, "labor" | "hoursPerDay" | "installationDays">): number {
-  return productionDays(input.labor, input.hoursPerDay) + Math.max(0, Math.ceil(finite(input.installationDays)));
+/** Rentabilidad de un precio cualquiera (por ejemplo, el que se escribe a mano). */
+export function analyzePrice(price: number, costs: CostGroups, financialPct: number): PriceAnalysis {
+  const financialCost = round2((positive(price) * positive(financialPct)) / 100);
+  const totalCost = round2(costWithoutFinancial(costs) + financialCost);
+  return { price, financialCost, totalCost, totalMargin: marginAt(price, totalCost) };
 }
 
-/** Suma `days` días laborales (lun–vie) a una fecha ISO yyyy-mm-dd. */
-export function addWorkingDays(startISO: string, days: number): string {
-  const [y, m, d] = startISO.split("-").map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d));
-  let left = Math.max(0, Math.floor(days));
-  while (left > 0) {
-    date.setUTCDate(date.getUTCDate() + 1);
-    const dow = date.getUTCDay();
-    if (dow !== 0 && dow !== 6) left -= 1;
-  }
-  return date.toISOString().slice(0, 10);
+export interface SuggestedPrice extends PriceAnalysis {
+  /** Parte del precio (antes del gasto financiero) que corresponde a materiales: costo / (1 − objetivo). */
+  materialsPrice: number;
+  laborPrice: number;
+  /** Rentabilidad resultante de cada parte (null si esa parte no tiene costo). */
+  materialsMargin: number | null;
+  laborMargin: number | null;
+}
+
+/**
+ * Precio sugerido = ( Materiales / (1 − rent. materiales) + Mano de obra, diseño y administración / (1 − rent. mano de obra)
+ *                     + Transporte + Imprevistos ) / (1 − % gasto financiero)
+ * Se redondea hacia arriba al peso. null si falta costo o algún porcentaje no es válido (≥ 100%).
+ */
+export function suggestedPrice(costs: CostGroups, t: QuoteTargets): SuggestedPrice | null {
+  if (!(costWithoutFinancial(costs) > 0) || !validPct(t.materialsTargetPct) || !validPct(t.laborTargetPct) || !validPct(t.financialPct)) return null;
+  const materialsPrice = round2(costs.materials / (1 - t.materialsTargetPct / 100));
+  const laborPrice = round2(costs.labor / (1 - t.laborTargetPct / 100));
+  const beforeFinancial = materialsPrice + laborPrice + costs.transport + costs.contingency;
+  const price = Math.ceil(beforeFinancial / (1 - t.financialPct / 100) - 1e-6);
+  return {
+    ...analyzePrice(price, costs, t.financialPct),
+    materialsPrice,
+    laborPrice,
+    materialsMargin: costs.materials > 0 ? marginAt(materialsPrice, costs.materials) : null,
+    laborMargin: costs.labor > 0 ? marginAt(laborPrice, costs.labor) : null,
+  };
 }
 
 // ── Sensibilidad al atraso ────────────────────────────────────
 
-/** El gráfico “¿Qué pasa si el proyecto se alarga?” solo tiene sentido con precio de venta, costo y más de un día laboral. */
+/** Costo promedio de un día de trabajo: mano de obra en horario normal / días de trabajo estimados. */
+export function averageDailyLaborCost(labor: RubroLabor[], neededDays: number): number {
+  if (!(neededDays > 0)) return 0;
+  return round2(labor.reduce((s, l) => s + l.normalCost, 0) / neededDays);
+}
+
+/** El gráfico “¿Qué pasa si el proyecto se alarga?” solo tiene sentido con precio de venta, costo y más de un día de trabajo. */
 export function showDelayChart(p: { salesPrice: number; workingDays: number; dailyCost: number; cost: number }): boolean {
   return p.salesPrice > 0 && p.workingDays > 1 && p.dailyCost > 0 && p.cost > 0;
 }
@@ -269,25 +428,19 @@ export interface DelayPoint {
 export interface DelayAnalysis {
   dailyCost: number;
   points: DelayPoint[];
-  /** Días de atraso que se pueden absorber sin bajar de la rentabilidad objetivo (0 = cualquier atraso ya baja el margen). null si no hay datos. */
+  /** Días de atraso que se pueden absorber sin bajar de la rentabilidad objetivo (0 = cualquier atraso ya la baja). null si no hay datos. */
   extraDaysBeforeTarget: number | null;
-  /** Días de atraso hasta margen 0 (ganancia nula). null si no se pierde plata con atraso o faltan datos. */
+  /** Días de atraso hasta rentabilidad 0 (ganancia nula). null si faltan datos. */
   extraDaysToBreakEven: number | null;
-  /** true si ya con el plazo base el margen queda por debajo del objetivo. */
+  /** true si ya en fecha la rentabilidad queda por debajo del objetivo. */
   belowTargetAtBase: boolean;
 }
 
 /**
- * ¿Cuánto margen se pierde por cada día extra con el equipo asignado?
- * Supuesto explícito: cada día de atraso cuesta lo mismo que un día de equipo completo.
+ * ¿Cuánta rentabilidad se pierde por cada día extra?
+ * Supuesto explícito: cada día de atraso cuesta lo mismo que un día promedio de trabajo.
  */
-export function delayAnalysis(params: {
-  baseCost: number;
-  salesPrice: number;
-  dailyCost: number;
-  targetMarginPct: number;
-  maxExtraDays?: number;
-}): DelayAnalysis {
+export function delayAnalysis(params: { baseCost: number; salesPrice: number; dailyCost: number; targetMarginPct: number; maxExtraDays?: number }): DelayAnalysis {
   const { baseCost, salesPrice, dailyCost, targetMarginPct } = params;
   const max = params.maxExtraDays ?? 15;
   const points: DelayPoint[] = [];
@@ -312,4 +465,17 @@ export function delayAnalysis(params: {
     extraDaysToBreakEven: Math.max(0, Math.floor((salesPrice - baseCost) / dailyCost)),
     belowTargetAtBase,
   };
+}
+
+/** Suma `days` días laborales (lun–vie) a una fecha ISO yyyy-mm-dd. */
+export function addWorkingDays(startISO: string, days: number): string {
+  const [y, m, d] = startISO.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  let left = Math.max(0, Math.floor(days));
+  while (left > 0) {
+    date.setUTCDate(date.getUTCDate() + 1);
+    const dow = date.getUTCDay();
+    if (dow !== 0 && dow !== 6) left -= 1;
+  }
+  return date.toISOString().slice(0, 10);
 }

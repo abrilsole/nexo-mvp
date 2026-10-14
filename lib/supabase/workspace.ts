@@ -5,8 +5,8 @@
 // alcanza con comparar referencias).
 // ─────────────────────────────────────────────────────────────
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { AlertSettings, AppRole, CostSettings, MaterialRequest, Operator, Project } from "@/types";
-import { DEFAULT_OVERTIME_MULTIPLIER, DEFAULT_SETTINGS } from "@/lib/constants";
+import type { AlertSettings, AppRole, CostSettings, HourRate, MaterialRequest, Operator, Project } from "@/types";
+import { DEFAULT_FINANCIAL_PCT, DEFAULT_HOUR_RATES, DEFAULT_OVERTIME_MULTIPLIER, DEFAULT_SETTINGS } from "@/lib/constants";
 import type { StockState } from "@/lib/stock";
 import type { TallerCall } from "./taller";
 import { deriveLedgerFromLegacy } from "@/lib/stock-legacy";
@@ -23,6 +23,9 @@ import {
   projectsFromRows,
   requestFromRow,
   requestToRow,
+  costSettingsFromRow,
+  hourRateFromRow,
+  hourRateToRow,
   reusableFromRow,
   type ChildKey,
 } from "./mappers";
@@ -45,6 +48,8 @@ export interface Workspace extends WorkspaceData {
   role: AppRole;
   /** Solo Gestión: Taller recibe siempre el valor por defecto (nunca lee cost_settings). */
   costSettings: CostSettings;
+  /** Tipos de hora con su tarifa. Solo Gestión: Taller recibe la lista por defecto sin usarla (nunca lee hour_rates). */
+  hourRates: HourRate[];
   demoSeeded: boolean;
   /**
    * true si la empresa tenía datos del modelo anterior (compras, usos, sobrantes) y todavía no tenía
@@ -104,6 +109,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     requests,
     resolved,
     costSettings,
+    hourRates,
   ] = await Promise.all([
     check(await db.from("projects").select("*").eq("organization_id", org).order("created_at", { ascending: false })) as Record<
       string,
@@ -124,6 +130,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     selectAll(db, "material_requests", org),
     check(await db.from("resolved_alerts").select("alert_id").eq("organization_id", org)) as { alert_id: string }[],
     loadCostSettings(db, org),
+    loadHourRates(db, org),
   ]);
 
   const domainProjects = projectsFromRows({ projects, budgetLines, purchaseEntries, materialUsages, actualEntries, activity, items, stageLogs, attachments });
@@ -145,6 +152,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     role: membership.role,
     demoSeeded: membership.organizations.demo_seeded,
     costSettings,
+    hourRates,
     projects: domainProjects,
     operators: operators.map(operatorFromRow),
     stock,
@@ -155,15 +163,21 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
   };
 }
 
-export const DEFAULT_COST_SETTINGS: CostSettings = { overtimeMultiplier: DEFAULT_OVERTIME_MULTIPLIER };
+export const DEFAULT_COST_SETTINGS: CostSettings = { overtimeMultiplier: DEFAULT_OVERTIME_MULTIPLIER, financialPct: DEFAULT_FINANCIAL_PCT };
 
-/** Multiplicador de horas extra de la empresa (tabla de Gestión). Sin fila → valor por defecto. */
+/** Multiplicador de horas extra y gasto financiero de la empresa (tabla de Gestión). Sin fila → valores por defecto. */
 async function loadCostSettings(db: SupabaseClient, org: string): Promise<CostSettings> {
-  const { data, error } = await db.from("cost_settings").select("overtime_multiplier").eq("organization_id", org).maybeSingle();
+  const { data, error } = await db.from("cost_settings").select("*").eq("organization_id", org).maybeSingle();
   // Si la tabla todavía no existe en la base, se usa el valor por defecto en lugar de romper la carga.
   if (error || !data) return { ...DEFAULT_COST_SETTINGS };
-  const m = Number((data as { overtime_multiplier: unknown }).overtime_multiplier);
-  return { overtimeMultiplier: Number.isFinite(m) && m >= 1 ? m : DEFAULT_OVERTIME_MULTIPLIER };
+  return costSettingsFromRow(data as Record<string, unknown>);
+}
+
+/** Tipos de hora con su tarifa (tabla de Gestión). Sin filas → las tarifas iniciales. */
+async function loadHourRates(db: SupabaseClient, org: string): Promise<HourRate[]> {
+  const { data, error } = await db.from("hour_rates").select("*").eq("organization_id", org).order("position");
+  if (error || !data || data.length === 0) return DEFAULT_HOUR_RATES.map((r) => ({ ...r }));
+  return (data as Record<string, unknown>[]).map(hourRateFromRow);
 }
 
 /** Mensaje para un operario dado de baja que inicia sesión. */
@@ -200,6 +214,7 @@ async function loadTallerWorkspace(db: SupabaseClient, user: { id: string; email
     userEmail: user.email ?? "",
     role: "operator",
     costSettings: { ...DEFAULT_COST_SETTINGS },
+    hourRates: [],
     demoSeeded: true,
     stockMigrated: false,
     projects: projectsFromRows({
@@ -300,8 +315,15 @@ export async function saveCostSettings(db: SupabaseClient, org: string, settings
   check(
     await db
       .from("cost_settings")
-      .upsert({ organization_id: org, overtime_multiplier: settings.overtimeMultiplier, updated_at: new Date().toISOString() }, { onConflict: "organization_id" }),
+      .upsert(
+        { organization_id: org, overtime_multiplier: settings.overtimeMultiplier, financial_pct: settings.financialPct, updated_at: new Date().toISOString() },
+        { onConflict: "organization_id" },
+      ),
   );
+}
+
+export async function saveHourRates(db: SupabaseClient, org: string, rates: HourRate[]) {
+  check(await db.from("hour_rates").upsert(rates.map((r, i) => hourRateToRow(org, r, i)), { onConflict: "organization_id,id" }));
 }
 
 export async function setAlertResolved(db: SupabaseClient, org: string, alertId: string, resolved: boolean) {

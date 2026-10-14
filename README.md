@@ -10,7 +10,7 @@ El nombre de la app sale de una sola constante: `APP_NAME` en `lib/constants.ts`
 
 ## Problema
 
-Al cotizar, la fábrica estima materiales, horas, tercerizaciones, logística e instalación. Durante la ejecución pasan cosas distintas: se usa más o menos material, hay desperdicio, quedan sobrantes, cambian los precios y aparecen horas o compras extra. Esa información suele quedar dispersa (planillas, WhatsApp, facturas, la memoria del jefe de planta), así que el margen real se conoce tarde o no se conoce.
+Al cotizar, la fábrica estima, rubro por rubro, materiales, horas de mano de obra, horas de diseño y fletes. Durante la ejecución pasan cosas distintas: se usa más o menos material, hay desperdicio, quedan sobrantes, cambian los precios y aparecen horas o compras extra. Esa información suele quedar dispersa (planillas, WhatsApp, facturas, la memoria del jefe de planta), así que el margen real se conoce tarde o no se conoce.
 
 Nuestra hipótesis es que lo difícil **no es el dashboard de presupuesto vs. real, sino capturar lo que pasó en el taller** (mundo físico → dato → costo → margen).
 
@@ -125,7 +125,7 @@ Los datos se guardan en Supabase, por empresa. Solo el modo Gestión/Taller eleg
 | Costo material real | `Σ (consumido + desperdicio) × unitCost` de **MaterialUsageEntry** |
 | Costo no material | `Σ actualEntries.amount` (horas = `hours × hourlyCost`) |
 | Costo real hasta hoy | material + no material |
-| Desvío por categoría | `real − presupuestado`; `% = / presupuestado` (presupuestado 0 → sin %). Siempre las siete categorías: Materiales, Mano de obra, Máquinas, Tercerizaciones, Logística, Instalación, Imprevistos |
+| Desvío por categoría | `real − presupuestado`; `% = / presupuestado` (presupuestado 0 → sin %). Siempre las siete categorías de reporte: Materiales, Mano de obra, Diseño, Administración, Transporte y fletes, Gasto financiero, Imprevistos (Lote 4, ver `docs/DECISIONES_RUBROS.md`) |
 | **Costo final proyectado** | `Σ_categoría max(presupuestado, real)` |
 | Diferencia y “¿Por qué?” | `Σ_categoría (proyectado − presupuestado)`: el “¿Por qué?” lista cada categoría con desvío ≠ 0 y su total es exactamente la Diferencia |
 | **Rentabilidad proyectada** | `(venta − costo final proyectado) / venta` |

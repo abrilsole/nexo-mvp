@@ -45,5 +45,5 @@ export function benchmarksForType(projects: Project[], projectType: string): Typ
 export const MIN_SUGGESTED_OVERRUN_PCT = 3;
 
 export function suggestedAdjustments(b: TypeBenchmarks): CategoryBenchmark[] {
-  return b.byCategory.filter((c) => c.avgOverrunPct >= MIN_SUGGESTED_OVERRUN_PCT && c.category !== "contingency");
+  return b.byCategory.filter((c) => c.avgOverrunPct >= MIN_SUGGESTED_OVERRUN_PCT && c.category !== "contingency" && c.category !== "financial");
 }

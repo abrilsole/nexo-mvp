@@ -1,8 +1,9 @@
 "use client";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import type { ActualEntryType, Project } from "@/types";
-import { ACTUAL_TYPE_TO_CATEGORY, CATEGORY_LABELS } from "@/lib/constants";
+import type { Project } from "@/types";
+import { CATEGORY_LABELS } from "@/lib/constants";
+import { actualInputCategory, type ActualInput } from "@/lib/project-operations";
 import { otherCostSchema, type OtherCostValues } from "@/lib/schemas";
 import { todayISO } from "@/lib/formatting";
 import { useAppStore } from "@/store/use-app-store";
@@ -11,22 +12,31 @@ import { Input, Textarea } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
 
-export function OtherCostForm({ project, type, onDone }: { project: Project; type: Exclude<ActualEntryType, "labor">; onDone: () => void }) {
+/** Costo real que no es material ni horas. `cost` dice el tipo y, para Diseño / Administración / Gasto financiero, la categoría. */
+export function OtherCostForm({ project, cost, onDone }: { project: Project; cost: Pick<ActualInput, "type" | "category">; onDone: () => void }) {
   const addActualEntry = useAppStore((s) => s.addActualEntry);
   const { register, handleSubmit, setError, formState } = useForm<OtherCostValues>({
     resolver: zodResolver(otherCostSchema),
     defaultValues: { supplier: "", description: "", date: todayISO(), notes: "" },
   });
   const e = formState.errors;
+  const category = actualInputCategory(cost);
   const submit = (v: OtherCostValues) => {
-    const res = addActualEntry(project.id, { type, description: v.description, amount: v.amount, supplier: v.supplier || undefined, date: v.date, notes: v.notes || undefined });
+    const res = addActualEntry(project.id, {
+      ...cost,
+      description: v.description,
+      amount: v.amount,
+      supplier: v.supplier || undefined,
+      date: v.date,
+      notes: v.notes || undefined,
+    });
     if (!res.ok) return setError("root", { message: res.error });
     onDone();
   };
   return (
     <form onSubmit={handleSubmit(submit)} noValidate className="space-y-4">
       <p className="text-sm text-slate-500">
-        Se imputará en la categoría <strong>{CATEGORY_LABELS[ACTUAL_TYPE_TO_CATEGORY[type]]}</strong>.
+        Se imputará en la categoría <strong>{CATEGORY_LABELS[category]}</strong>.
       </p>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Descripción" htmlFor="o-desc" error={e.description?.message} className="col-span-2">

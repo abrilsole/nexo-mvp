@@ -5,6 +5,11 @@
 // hasta el plazo, la jornada diaria y las horas que el operario ya tiene
 // asignadas en otros proyectos activos. Lo que no entra en horario normal
 // se calcula como horas extra, con el costo por hora × multiplicador.
+//
+// Lote 4: la cotización usa workingDaysBetween, splitOvertime y laborAmount
+// (por cantidad de operarios, sin nombres). La disponibilidad por operario
+// con nombre (hoursAssignedElsewhere, operatorCapacity, planLabor) queda
+// para que el jefe de planta asigne personas en el Lote 5.
 // ─────────────────────────────────────────────────────────────
 import type { Operator, Project } from "@/types";
 import { ACTIVE_STATUSES } from "./constants";

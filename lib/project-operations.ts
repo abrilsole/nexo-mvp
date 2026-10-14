@@ -10,6 +10,7 @@ import type {
   AlertSettings,
   AppRole,
   Attachment,
+  BudgetCategory,
   BudgetLine,
   LeftoverDims,
   MaterialSource,
@@ -31,6 +32,7 @@ import {
   BUDGET_EDITABLE_STATUSES,
   CATEGORY_IS_PLURAL,
   CATEGORY_LABELS,
+  type OtherCostCategory,
   STATUS_LABELS,
   STATUS_ORDER,
 } from "./constants";
@@ -92,8 +94,9 @@ export interface BudgetLineInput {
   unit: string;
   unitCost: number;
   notes?: string;
+  rubro?: BudgetLine["rubro"];
+  hourRateId?: string;
   operatorId?: string;
-  laborRole?: string;
   hourType?: BudgetLine["hourType"];
   overtimeMultiplier?: number;
 }
@@ -425,6 +428,8 @@ export function registerUsage(
 
 export interface ActualInput {
   type: Exclude<ActualEntryType, "labor">;
+  /** Solo para "other": Diseño, Administración o Gasto financiero. */
+  category?: OtherCostCategory;
   description: string;
   date: string;
   supplier?: string;
@@ -433,7 +438,12 @@ export interface ActualInput {
   itemId?: string;
 }
 
-/** Costos monetarios que no son materiales ni horas (tercerizaciones, flete…). Sólo Gestión. */
+/** Categoría de reporte de un costo real: la elegida en Diseño / Administración / Gasto financiero, o la del tipo. */
+export function actualInputCategory(input: Pick<ActualInput, "type" | "category">): BudgetCategory {
+  return input.type === "other" && input.category ? input.category : ACTUAL_TYPE_TO_CATEGORY[input.type];
+}
+
+/** Costos monetarios que no son materiales ni horas (trabajo comprado hecho, montaje, fletes, diseño, administración, gasto financiero…). Sólo Gestión. */
 export function addActual(project: Project, input: ActualInput, settings: AlertSettings, ctx: Ctx): Project {
   assertManager(ctx, "Cargar costos extra");
   assertExecutable(project, "costos de ejecución");
@@ -443,7 +453,7 @@ export function addActual(project: Project, input: ActualInput, settings: AlertS
     projectId: project.id,
     date: input.date,
     type: input.type,
-    category: ACTUAL_TYPE_TO_CATEGORY[input.type],
+    category: actualInputCategory(input),
     description: input.description || ACTUAL_TYPE_LABELS[input.type],
     amount: input.amount,
     supplier: input.supplier,

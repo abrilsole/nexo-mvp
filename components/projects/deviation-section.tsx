@@ -25,8 +25,8 @@ export function DeviationSection({ econ, settings, completed }: { econ: ProjectE
         <CardTitle>{completed ? "¿Dónde se desvió?" : "¿Dónde se está desviando?"}</CardTitle>
         <CardDescription>
           {completed
-            ? "Costo presupuestado vs. costo real final, en las siete categorías."
-            : "Costo presupuestado vs. costo real hasta hoy, en las siete categorías. El costo final proyectado toma el mayor de los dos."}
+            ? "Costo presupuestado vs. costo real final, en las categorías de reporte."
+            : "Costo presupuestado vs. costo real hasta hoy, en las categorías de reporte. El costo final proyectado toma el mayor de los dos."}
         </CardDescription>
       </CardHeader>
       <Table>
