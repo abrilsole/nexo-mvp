@@ -5,7 +5,6 @@
 import type { ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
 import { formatCurrency, formatCurrencyOrDash, formatNumber, formatPercent, formatWorkingDays } from "@/lib/formatting";
-import { marginPercent, profitOrNull } from "@/lib/calculations";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -30,12 +29,11 @@ export interface QuoteWorkspaceProps {
 
 export function QuoteWorkspace({ state, onState, result, projectType, salesPrice, onSalesPrice, priceError, actionLabel, onAction, context }: QuoteWorkspaceProps) {
   const blocker = quoteActionBlocker(result, salesPrice);
-  const profit = profitOrNull(salesPrice, result.total);
-  const margin = marginPercent(salesPrice - result.total, salesPrice);
-  const { schedule } = result;
+  const { schedule, breakdown: b } = result;
+  const sale = (v: number | null) => (v === null ? "—" : formatCurrency(v));
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_300px]" data-testid="quote-workspace">
+    <div className="grid gap-6 lg:grid-cols-[1fr_320px]" data-testid="quote-workspace">
       <BudgetCalculator
         state={state}
         onState={onState}
@@ -46,26 +44,72 @@ export function QuoteWorkspace({ state, onState, result, projectType, salesPrice
         priceError={priceError}
       />
 
-      <aside className="lg:sticky lg:top-20 lg:self-start" aria-label="Resumen de la cotización">
+      <aside className="lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto" aria-label="Resumen de la cotización">
         <Card>
           <CardContent className="space-y-3 pt-5 text-sm">
             {context && <div className="text-xs text-slate-500">{context}</div>}
-            <Row label="Costo presupuestado" value={formatCurrency(result.total)} />
-            <Row label="Precio de venta" value={salesPrice > 0 ? formatCurrency(salesPrice) : "Sin definir"} />
-            <Row label="Ganancia esperada" value={formatCurrencyOrDash(profit)} strong />
-            <div className="border-t border-slate-100 pt-3">
-              <div className="text-xs text-slate-500">Rentabilidad esperada</div>
-              <div className={cn("text-3xl font-semibold tabular", margin !== null && margin < 15 ? "text-amber-700" : "text-slate-900")} aria-live="polite">
-                {salesPrice > 0 ? formatPercent(margin) : "—"}
+            <h2 className="flex items-center gap-1 text-sm font-semibold text-slate-900">
+              Resumen <span className="font-normal text-slate-500">(importes sin IVA)</span>
+              <HelpTip label="Resumen">
+                Igual que la planilla de costeo: costo, rentabilidad y venta de materiales y de mano de obra; después transporte, imprevistos y gasto financiero.
+                Las rentabilidades se cambian en Resultado.
+              </HelpTip>
+            </h2>
+
+            <Group title="Materiales">
+              <Row label="Costo" value={formatCurrency(b.materials.cost)} />
+              {b.materials.safetyMargin > 0 && <Row label="incluye margen de seguridad" value={`+${formatCurrency(b.materials.safetyMargin)}`} small />}
+              <Row label="Rentabilidad" value={formatPercent(b.materials.targetPct)} />
+              <Row label="Venta" value={sale(b.materials.sale)} />
+            </Group>
+
+            <Group title="Mano de obra">
+              <Row label="Costo" value={formatCurrency(b.labor.cost)} />
+              <p className="text-xs text-slate-500 tabular">
+                Operarios {formatCurrency(b.labor.operators)} · Diseño {formatCurrency(b.labor.design)} · Administración {formatCurrency(b.labor.admin)}
+              </p>
+              {b.labor.safetyMargin > 0 && <Row label="incluye margen de seguridad" value={`+${formatCurrency(b.labor.safetyMargin)}`} small />}
+              <Row label="Rentabilidad" value={formatPercent(b.labor.targetPct)} />
+              <Row label="Venta" value={sale(b.labor.sale)} />
+            </Group>
+
+            {(b.transport > 0 || b.contingency > 0 || b.financial.amount > 0) && (
+              <div className="space-y-1.5 border-t border-slate-100 pt-3">
+                {b.transport > 0 && <Row label="Transporte" value={formatCurrency(b.transport)} />}
+                {b.contingency > 0 && <Row label="Imprevistos" value={formatCurrency(b.contingency)} />}
+                <Row label={`Gasto financiero (${formatNumber(b.financial.pct, 2)} %)`} value={formatCurrency(b.financial.amount)} />
               </div>
+            )}
+
+            <div className="space-y-1.5 border-t border-slate-100 pt-3">
+              <Row label="Costo total (sin IVA)" value={formatCurrency(b.totalCost)} />
+              <Row
+                label={b.priceSource === "suggested" ? "Precio sugerido (sin IVA)" : "Precio (sin IVA)"}
+                value={b.price > 0 ? formatCurrency(b.price) : "Sin definir"}
+                strong
+              />
+              <Row label="Ganancia" value={formatCurrencyOrDash(b.profit)} />
+              <div className="flex items-baseline justify-between gap-2 pt-1">
+                <span className="text-slate-500">Rentabilidad total</span>
+                <span
+                  className={cn("text-2xl font-semibold tabular", b.margin !== null && b.margin < 15 ? "text-amber-700" : "text-slate-900")}
+                  aria-live="polite"
+                >
+                  {formatPercent(b.margin)}
+                </span>
+              </div>
+              {b.priceSource === "chosen" && !b.usesSuggested && b.suggestedPrice !== null && (
+                <p className="text-xs text-slate-500">Precio escrito a mano: la venta por tipo solo aplica al precio sugerido ({formatCurrency(b.suggestedPrice)}).</p>
+              )}
             </div>
+
             <div className="space-y-2 border-t border-slate-100 pt-3">
               <Row
                 label="Días de trabajo estimados"
                 value={schedule.workDays > 0 ? formatWorkingDays(schedule.workDays) : "—"}
                 help="Horas por operario / jornada, sumando los rubros uno detrás de otro. Supuesto conservador, a confirmar."
               />
-              <Row label="Plazo" value={schedule.availableDays !== null ? `${formatWorkingDays(schedule.availableDays)} hábiles` : "Sin plazo"} />
+              <Row label="Plazo" value={schedule.availableDays !== null ? formatWorkingDays(schedule.availableDays) : "Sin plazo"} />
               {schedule.fits === false && (
                 <p role="alert" className="flex items-start gap-1.5 text-xs text-amber-800">
                   <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
@@ -91,9 +135,18 @@ export function QuoteWorkspace({ state, onState, result, projectType, salesPrice
   );
 }
 
-function Row({ label, value, strong, help }: { label: string; value: string; strong?: boolean; help?: string }) {
+function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-2">
+    <section aria-label={title} className="space-y-1.5 border-t border-slate-100 pt-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function Row({ label, value, strong, small, help }: { label: string; value: string; strong?: boolean; small?: boolean; help?: string }) {
+  return (
+    <div className={cn("flex items-center justify-between gap-2", small && "text-xs")}>
       <span className="flex items-center gap-1 text-slate-500">
         {label}
         {help && <HelpTip label={label}>{help}</HelpTip>}

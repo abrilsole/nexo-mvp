@@ -6,7 +6,8 @@
 // ─────────────────────────────────────────────────────────────
 import type { BudgetCategory, Project } from "@/types";
 import { actualByCategory, budgetByCategory } from "./calculations";
-import { CATEGORY_ORDER } from "./constants";
+import { CATEGORY_LABELS, CATEGORY_ORDER, MIN_COMPARABLE_PROJECTS } from "./constants";
+import { formatPercent } from "./formatting";
 
 export interface CategoryBenchmark {
   category: BudgetCategory;
@@ -46,4 +47,30 @@ export const MIN_SUGGESTED_OVERRUN_PCT = 3;
 
 export function suggestedAdjustments(b: TypeBenchmarks): CategoryBenchmark[] {
   return b.byCategory.filter((c) => c.avgOverrunPct >= MIN_SUGGESTED_OVERRUN_PCT && c.category !== "contingency" && c.category !== "financial");
+}
+
+/** Mínimo de proyectos comparables para mostrar el aprendizaje (en la demo se muestra igual, rotulado). */
+export const MIN_LEARNING_PROJECTS = 3;
+
+export interface LearningInsight {
+  category: BudgetCategory;
+  avgOverrunPct: number;
+  sampleSize: number;
+  /** "En 4 proyectos parecidos, Materiales costó 10,9% más de lo presupuestado." */
+  text: string;
+  /** Con menos de MIN_COMPARABLE_PROJECTS es un indicio, no una conclusión. */
+  weak: boolean;
+}
+
+/** Líneas de aprendizaje para Resultado: una por categoría con sobrecosto relevante. */
+export function learningInsights(b: TypeBenchmarks, opts: { isDemo: boolean }): LearningInsight[] {
+  return suggestedAdjustments(b)
+    .filter((s) => opts.isDemo || s.sampleSize >= MIN_LEARNING_PROJECTS)
+    .map((s) => ({
+      category: s.category,
+      avgOverrunPct: s.avgOverrunPct,
+      sampleSize: s.sampleSize,
+      text: `En ${s.sampleSize} ${s.sampleSize === 1 ? "proyecto parecido" : "proyectos parecidos"}, ${CATEGORY_LABELS[s.category]} costó ${formatPercent(Math.abs(s.avgOverrunPct))} ${s.avgOverrunPct >= 0 ? "más" : "menos"} de lo presupuestado.`,
+      weak: s.sampleSize < MIN_COMPARABLE_PROJECTS,
+    }));
 }

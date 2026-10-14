@@ -3,26 +3,22 @@
 import type { BudgetCategory, HourRate, Project, RubroId } from "@/types";
 import {
   adjustmentLines,
-  analyzePrice,
-  costGroups,
   financialLine,
+  quoteBreakdown,
   ratesByCategory,
   rubroLabor,
   rubroLines,
-  suggestedPrice,
   totalOfLines,
   workSchedule,
   type CalcAdjustment,
-  type CostGroups,
-  type PriceAnalysis,
+  type QuoteBreakdown,
   type QuoteInput,
   type RatesByCategory,
   type RubroLabor,
-  type SuggestedPrice,
   type WorkSchedule,
 } from "@/lib/budget-calculator";
 import { delayAnalysis, type DelayResult } from "@/lib/delay";
-import { benchmarksForType, suggestedAdjustments, type CategoryBenchmark, type TypeBenchmarks } from "@/lib/historical-benchmarks";
+import { benchmarksForType, learningInsights, type LearningInsight } from "@/lib/historical-benchmarks";
 import type { BudgetLineInput } from "@/lib/project-operations";
 import { CATEGORY_LABELS, DEFAULT_FINANCIAL_PCT, HOUR_CATEGORIES, MATERIAL_CATALOG } from "@/lib/constants";
 import { formatCurrency, formatNumber, formatWorkingDays } from "@/lib/formatting";
@@ -58,12 +54,22 @@ export interface CalcState {
   materialsTargetPct: string;
   laborTargetPct: string;
   financialPct: string;
-  /** Categorías cuyo ajuste por historial el usuario decidió aplicar. */
-  appliedAdjustments: BudgetCategory[];
+  /** Márgenes de seguridad aplicados desde el aprendizaje (% editable). */
+  safetyMargins: SafetyMarginRow[];
   /** Atraso: multa o costo por día (opcional). */
   delayPenalty: string;
   /** Atraso: piso de rentabilidad en % ("" = la rentabilidad total del precio sugerido). */
   delayFloorPct: string;
+}
+
+/** Margen de seguridad aplicado: el % se puede editar; la referencia queda para que sea trazable. */
+export interface SafetyMarginRow {
+  category: BudgetCategory;
+  pct: string;
+  /** Desvío promedio de los proyectos comparables al aplicarlo, en %. */
+  referencePct: number;
+  sampleSize: number;
+  projectType: string;
 }
 
 let seq = 0;
@@ -84,7 +90,7 @@ export function initialCalcState(financialPct = DEFAULT_FINANCIAL_PCT): CalcStat
     materialsTargetPct: "30",
     laborTargetPct: "30",
     financialPct: String(financialPct).replace(".", ","),
-    appliedAdjustments: [],
+    safetyMargins: [],
     delayPenalty: "",
     delayFloorPct: "",
   };
@@ -106,6 +112,8 @@ export interface CalculatorContext {
   hoursPerDay: number;
   /** Precio de venta elegido (0 = todavía no): de él sale el gasto financiero. */
   salesPrice: number;
+  /** Empresa demo: el aprendizaje se muestra aunque haya pocos proyectos, rotulado. */
+  isDemo: boolean;
 }
 
 function calcStateToInput(s: CalcState, ctx: Pick<CalculatorContext, "rates" | "overtimeMultiplier" | "hoursPerDay">): QuoteInput {
@@ -136,14 +144,13 @@ function calcStateToInput(s: CalcState, ctx: Pick<CalculatorContext, "rates" | "
   };
 }
 
-function toAdjustments(
-  applied: BudgetCategory[],
-  suggestions: { category: BudgetCategory; avgOverrunPct: number; sampleSize: number }[],
-  projectType: string,
-): CalcAdjustment[] {
-  return suggestions
-    .filter((s) => applied.includes(s.category))
-    .map((s) => ({ category: s.category, pct: Math.round(s.avgOverrunPct * 10) / 10, sampleSize: s.sampleSize, projectType }));
+const toAdjustments = (margins: SafetyMarginRow[]): CalcAdjustment[] =>
+  margins.map((m) => ({ category: m.category, pct: n(m.pct), referencePct: m.referencePct, sampleSize: m.sampleSize, projectType: m.projectType }));
+
+/** Margen de seguridad a partir de una línea de aprendizaje: arranca con el desvío promedio (1 decimal). */
+export function safetyMarginFrom(insight: LearningInsight, projectType: string): SafetyMarginRow {
+  const pct = Math.round(insight.avgOverrunPct * 10) / 10;
+  return { category: insight.category, pct: String(pct).replace(".", ","), referencePct: insight.avgOverrunPct, sampleSize: insight.sampleSize, projectType };
 }
 
 export interface RubroResult {
@@ -164,14 +171,12 @@ export interface CalculatorResult {
   /** Todas las líneas del costo presupuestado (rubros + ajustes + gasto financiero). */
   lines: BudgetLineInput[];
   total: number;
-  costs: CostGroups;
-  suggested: SuggestedPrice | null;
-  /** Rentabilidad con el precio elegido (null sin precio). */
-  atPrice: PriceAnalysis | null;
+  /** Desglose del resumen (panel, Resultado y "Revisar y crear"). */
+  breakdown: QuoteBreakdown;
   /** Tarifas usadas (undefined = no hay tipo de hora de esa categoría). */
   rates: RatesByCategory;
-  benchmarks: TypeBenchmarks;
-  suggestions: CategoryBenchmark[];
+  /** Aprendizaje de proyectos anteriores (vacío con menos de 3 comparables, salvo en la demo). */
+  insights: LearningInsight[];
   hasContent: boolean;
   /** N del cálculo de atraso: el equipo más grande previsto (máximo de operarios de un rubro). */
   crewSize: number;
@@ -198,17 +203,15 @@ export function computeCalculator(state: CalcState, projectType: string, ctx: Ca
     const lines = rubroLines(r, labor, { rates, overtimeMultiplier: input.overtimeMultiplier, hoursPerDay: input.hoursPerDay });
     return { key: state.rubros[i].key, rubro: r.rubro, labor, lines, total: totalOfLines(lines) };
   });
-  const benchmarks = benchmarksForType(ctx.projects, projectType);
-  const suggestions = suggestedAdjustments(benchmarks);
   const rubroLinesAll = rubros.flatMap((r) => r.lines);
-  const withAdjustments = [...rubroLinesAll, ...adjustmentLines(rubroLinesAll, toAdjustments(state.appliedAdjustments, suggestions, projectType))];
-  const costs = costGroups(withAdjustments);
+  const withAdjustments = [...rubroLinesAll, ...adjustmentLines(rubroLinesAll, toAdjustments(state.safetyMargins))];
   const financial = financialLine(input.financialPct, ctx.salesPrice);
   const lines = financial ? [...withAdjustments, financial] : withAdjustments;
   const total = totalOfLines(lines);
-  const suggested = suggestedPrice(costs, input);
+  const breakdown = quoteBreakdown(lines, input, ctx.salesPrice);
+  const suggestedMargin = breakdown.suggestedPrice !== null ? quoteBreakdown(lines, input, breakdown.suggestedPrice).margin : null;
   const crewSize = Math.max(0, ...input.rubros.map((r) => r.workers));
-  const floor = parseDecimal(state.delayFloorPct);
+  const floor = state.delayFloorPct.trim() ? parseDecimal(state.delayFloorPct) : NaN; // vacío = rentabilidad del precio sugerido
   const delay = delayAnalysis({
     price: ctx.salesPrice,
     cost: total,
@@ -216,7 +219,8 @@ export function computeCalculator(state: CalcState, projectType: string, ctx: Ca
     hoursPerDay: input.hoursPerDay,
     laborRate: rates.labor?.hourlyRate ?? 0,
     dailyPenalty: n(state.delayPenalty),
-    floorPct: Number.isFinite(floor) ? floor : (suggested?.totalMargin ?? 0),
+    floorPct: Number.isFinite(floor) ? floor : (suggestedMargin ?? 0),
+    workDays: schedule.workDays,
   });
   return {
     input,
@@ -225,12 +229,9 @@ export function computeCalculator(state: CalcState, projectType: string, ctx: Ca
     overtimeHours: round2(rubros.reduce((s, r) => s + (r.labor?.overtimeHours ?? 0), 0)),
     lines,
     total,
-    costs,
-    suggested,
-    atPrice: ctx.salesPrice > 0 ? analyzePrice(ctx.salesPrice, costs, input.financialPct) : null,
+    breakdown,
     rates,
-    benchmarks,
-    suggestions,
+    insights: learningInsights(benchmarksForType(ctx.projects, projectType), { isDemo: ctx.isDemo }),
     hasContent: withAdjustments.length > 0,
     crewSize,
     delay,
@@ -245,19 +246,19 @@ export function ratesText(rates: RatesByCategory): string {
 /** Avisos del paso de revisión, en un solo lugar. */
 export function reviewWarnings(calc: CalculatorResult, salesPrice: number): string[] {
   const out: string[] = [];
-  const { schedule, suggested, rates } = calc;
+  const { schedule, breakdown, rates } = calc;
   if (!calc.hasContent) out.push("Falta cargar el costo: no hay materiales, horas ni importes.");
   if (!(salesPrice > 0)) out.push("Falta el precio de venta.");
   const missingRates = HOUR_CATEGORIES.filter((c) => !rates[c]?.hourlyRate);
   if (missingRates.length > 0) out.push("Falta la tarifa de algún tipo de hora: cargala en Configuración para que esas horas sumen al costo.");
   if (schedule.fits === false) {
     out.push(
-      `Los días de trabajo estimados (${formatWorkingDays(schedule.workDays)}) no entran en el plazo (${formatWorkingDays(schedule.availableDays ?? 0)} hábiles): ` +
+      `Los días de trabajo estimados (${formatWorkingDays(schedule.workDays)}) no entran en el plazo (${formatWorkingDays(schedule.availableDays ?? 0)}): ` +
         `${formatNumber(calc.overtimeHours, 1)} h se calculan como horas extra.`,
     );
   }
-  if (salesPrice > 0 && suggested && salesPrice !== suggested.price) {
-    out.push(`El precio fue escrito a mano (el sugerido es ${formatCurrency(suggested.price)}): el desglose de rentabilidad por materiales y mano de obra solo aplica al precio sugerido.`);
+  if (breakdown.priceSource === "chosen" && breakdown.suggestedPrice !== null && !breakdown.usesSuggested) {
+    out.push(`El precio fue escrito a mano (el sugerido es ${formatCurrency(breakdown.suggestedPrice)}): el desglose de rentabilidad por materiales y mano de obra solo aplica al precio sugerido.`);
   }
   return out;
 }

@@ -2,35 +2,50 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { delayAnalysis, type DelayInput } from "@/lib/delay";
+import { delayAnalysis, scenarioDays, type DelayInput } from "@/lib/delay";
 import { costSettingsError, hourRatesError } from "@/lib/cost-settings";
 import { DEFAULT_HOUR_RATES, DEFAULT_HOURS_PER_DAY } from "@/lib/constants";
 import { computeCalculator, initialCalcState, newRubroRow, quoteActionBlocker, type CalcState } from "@/components/budget/calculator-state";
 
-describe("¿qué pasa si el proyecto se alarga?", () => {
-  const known: DelayInput = { price: 1_000_000, cost: 700_000, workers: 2, hoursPerDay: 9.5, laborRate: 19_000, dailyPenalty: 0, floorPct: 30 };
+describe("si el trabajo se alarga", () => {
+  const known: DelayInput = { price: 1_000_000, cost: 700_000, workers: 2, hoursPerDay: 9.5, laborRate: 19_000, dailyPenalty: 0, floorPct: 30, workDays: 8 };
+  const cheap = { workers: 1, hoursPerDay: 1, laborRate: 10_000 }; // 10.000 por día
 
-  it("caso conocido: c_dia = 361.000, R(0) = 30,0 %, R(1) = −6,1 %", () => {
-    const d = delayAnalysis(known)!;
+  it("caso conocido: c_dia = 361.000, R(0) = 30,0 %, un día extra deja −6,1 %, d_cero ≈ 0,83 días", () => {
+    const d = delayAnalysis({ ...known, workDays: 1 })!;
     expect(d.dailyCost).toBe(361_000);
-    expect(d.points[0].margin).toBeCloseTo(30, 6);
-    expect(d.points[1].margin).toBeCloseTo(-6.1, 6);
+    expect(d.scenarios[0].margin).toBeCloseTo(30, 6);
+    expect(d.scenarios[1]).toMatchObject({ pct: 25, days: 1 });
+    expect(d.scenarios[1].margin).toBeCloseTo(-6.1, 6);
     expect(d.pointsPerDay).toBeCloseTo(36.1, 6);
     expect(d.daysToFloor).toBe(0);
-    expect(d.daysToZero).toBeCloseTo(300_000 / 361_000, 6);
+    expect(d.daysToZero).toBeCloseTo(0.83, 2);
   });
 
-  it("escenarios +0, +3, +5, +10 y +15 días hábiles con costo, ganancia y rentabilidad", () => {
-    const d = delayAnalysis({ ...known, workers: 1, hoursPerDay: 1, laborRate: 10_000 })!; // 10.000 por día
-    expect(d.scenarios.map((s) => s.days)).toEqual([0, 3, 5, 10, 15]);
-    expect(d.scenarios[1]).toEqual({ days: 3, cost: 730_000, profit: 270_000, margin: 27 });
-    expect(d.points).toHaveLength(16);
+  it("escenarios proporcionales: +25 %, +50 % y +100 % de los días de trabajo estimados, redondeando hacia arriba", () => {
+    const d = delayAnalysis({ ...known, ...cheap, workDays: 10 })!;
+    expect(d.scenarios.map((s) => [s.pct, s.days])).toEqual([
+      [0, 0],
+      [25, 3], // 2,5 → 3
+      [50, 5],
+      [100, 10],
+    ]);
+    expect(d.scenarios[1]).toEqual({ pct: 25, days: 3, cost: 730_000, profit: 270_000, margin: 27 });
   });
 
-  it("días hasta el piso: (P − C − r_min × P) / c_dia, redondeado hacia abajo", () => {
-    const d = delayAnalysis({ ...known, workers: 1, hoursPerDay: 1, laborRate: 10_000, floorPct: 20 })!;
-    expect(d.daysToFloor).toBe(10); // (1.000.000 − 700.000 − 200.000) / 10.000
-    expect(delayAnalysis({ ...known, workers: 1, hoursPerDay: 1, laborRate: 30_000, floorPct: 20 })!.daysToFloor).toBe(3); // 3,33
+  it("cada escenario tiene como mínimo 1 día", () => {
+    expect(scenarioDays(2, 25)).toBe(1);
+    expect(scenarioDays(0, 50)).toBe(1);
+    expect(scenarioDays(3, 50)).toBe(2);
+    expect(scenarioDays(23, 100)).toBe(23);
+    const d = delayAnalysis({ ...known, ...cheap, workDays: 2 })!;
+    expect(d.scenarios.map((s) => s.days)).toEqual([0, 1, 1, 2]);
+  });
+
+  it("días hasta el piso con decimales: (P − C − r_min × P) / c_dia", () => {
+    expect(delayAnalysis({ ...known, ...cheap, floorPct: 20 })!.daysToFloor).toBe(10);
+    expect(delayAnalysis({ ...known, workers: 1, hoursPerDay: 1, laborRate: 30_000, floorPct: 20 })!.daysToFloor).toBeCloseTo(3.33, 2);
+    expect(delayAnalysis({ ...known, price: 2_000_000, floorPct: 30 })!.daysToFloor).toBeCloseTo(1.94, 2);
     expect(delayAnalysis({ ...known, floorPct: 40 })!.daysToFloor).toBe(0); // ya está por debajo
   });
 
@@ -41,15 +56,15 @@ describe("¿qué pasa si el proyecto se alarga?", () => {
     expect(d.daysToZero).toBeNull();
   });
 
-  it("cambia al cambiar operarios, jornada, tarifa, multa, precio y piso", () => {
+  it("cambia al cambiar operarios, jornada, tarifa, multa, precio, piso y días estimados", () => {
     const base = delayAnalysis(known)!;
     expect(delayAnalysis({ ...known, workers: 3 })!.dailyCost).toBe(541_500);
     expect(delayAnalysis({ ...known, hoursPerDay: 8 })!.dailyCost).toBe(304_000);
     expect(delayAnalysis({ ...known, laborRate: 20_000 })!.dailyCost).toBe(380_000);
     expect(delayAnalysis({ ...known, dailyPenalty: 50_000 })!.dailyCost).toBe(411_000);
     expect(delayAnalysis({ ...known, price: 2_000_000 })!.pointsPerDay).toBeCloseTo(base.pointsPerDay / 2, 6);
-    expect(delayAnalysis({ ...known, price: 2_000_000, floorPct: 30 })!.daysToFloor).toBe(1); // (2M − 0,7M − 0,6M) / 361.000 = 1,94
-    expect(delayAnalysis({ ...known, price: 2_000_000, floorPct: 10 })!.daysToFloor).toBe(3); // (2M − 0,7M − 0,2M) / 361.000 = 3,05
+    expect(delayAnalysis({ ...known, price: 2_000_000, floorPct: 10 })!.daysToFloor).toBeCloseTo(3.05, 2);
+    expect(delayAnalysis({ ...known, workDays: 20 })!.scenarios.map((s) => s.days)).toEqual([0, 5, 10, 20]);
   });
 
   it("sin precio o sin costo no se calcula", () => {
@@ -64,7 +79,7 @@ describe("jornada de Configuración y plazo en días hábiles", () => {
     rubros: [{ ...newRubroRow("carpinteria_madera"), materials: [], workers: "2", hoursPerWorker: "38" }],
     ...patch,
   });
-  const ctx = { projects: [], rates: DEFAULT_HOUR_RATES, overtimeMultiplier: 2, hoursPerDay: DEFAULT_HOURS_PER_DAY, salesPrice: 0 };
+  const ctx = { projects: [], rates: DEFAULT_HOUR_RATES, overtimeMultiplier: 2, hoursPerDay: DEFAULT_HOURS_PER_DAY, salesPrice: 0, isDemo: false };
 
   it("la jornada por defecto es 9,5 h y sale de Configuración", () => {
     const c = computeCalculator(state(), "", ctx);

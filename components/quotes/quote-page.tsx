@@ -15,13 +15,14 @@ export function QuotePage() {
   const projects = useAppStore((s) => s.projects);
   const { overtimeMultiplier, financialPct, hoursPerDay } = useAppStore((s) => s.costSettings);
   const rates = useAppStore((s) => s.hourRates);
+  const isDemo = useAppStore((s) => s.isDemo);
   const [state, setState] = useState<CalcState>(() => initialCalcState(financialPct));
   const [projectType, setProjectType] = useState("");
   const [salesPrice, setSalesPrice] = useState(0);
 
   const calc = useMemo(
-    () => computeCalculator(state, projectType, { projects, rates, overtimeMultiplier, hoursPerDay, salesPrice }),
-    [state, projectType, projects, rates, overtimeMultiplier, hoursPerDay, salesPrice],
+    () => computeCalculator(state, projectType, { projects, rates, overtimeMultiplier, hoursPerDay, salesPrice, isDemo }),
+    [state, projectType, projects, rates, overtimeMultiplier, hoursPerDay, salesPrice, isDemo],
   );
 
   const toProject = () => {

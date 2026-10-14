@@ -41,6 +41,7 @@ export function NewProjectWizard() {
   const projects = useAppStore((s) => s.projects);
   const { overtimeMultiplier, financialPct, hoursPerDay } = useAppStore((s) => s.costSettings);
   const rates = useAppStore((s) => s.hourRates);
+  const isDemo = useAppStore((s) => s.isDemo);
   const createProject = useAppStore((s) => s.createProject);
   const code = useMemo(() => nextProjectCode(projects), [projects]);
   const [draft] = useState(peekQuoteDraft);
@@ -70,8 +71,8 @@ export function NewProjectWizard() {
   const dueDate = useWatch({ control, name: "dueDate" });
   const projectType = useWatch({ control, name: "projectType" });
   const calc = useMemo(
-    () => computeCalculator(calcState, projectType, { projects, rates, overtimeMultiplier, hoursPerDay, salesPrice }),
-    [calcState, projectType, projects, rates, overtimeMultiplier, hoursPerDay, salesPrice],
+    () => computeCalculator(calcState, projectType, { projects, rates, overtimeMultiplier, hoursPerDay, salesPrice, isDemo }),
+    [calcState, projectType, projects, rates, overtimeMultiplier, hoursPerDay, salesPrice, isDemo],
   );
   const plazo = plazoOf(calcState);
   const suggestedDue = plazo > 0 && startDate ? addWorkingDays(startDate, plazo) : null;
@@ -152,7 +153,7 @@ export function NewProjectWizard() {
             </Field>
             {suggestedDue && suggestedDue !== dueDate && (
               <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 sm:col-span-2">
-                Con el plazo de la cotización ({formatWorkingDays(plazo)} hábiles) la entrega sería el {formatDate(suggestedDue)}.
+                Con el plazo de la cotización ({formatWorkingDays(plazo)}) la entrega sería el {formatDate(suggestedDue)}.
                 <Button size="sm" variant="outline" onClick={() => setValue("dueDate", suggestedDue, { shouldValidate: true })}>
                   Usar esa fecha
                 </Button>

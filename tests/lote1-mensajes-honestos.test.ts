@@ -135,7 +135,7 @@ describe("sin precio de venta", () => {
     expect(econ.expectedMargin).toBeNull();
   });
   it("el cálculo de atraso necesita precio de venta y costo", () => {
-    const base = { workers: 2, hoursPerDay: 9.5, laborRate: 19_000, dailyPenalty: 0, floorPct: 30 };
+    const base = { workers: 2, hoursPerDay: 9.5, laborRate: 19_000, dailyPenalty: 0, floorPct: 30, workDays: 10 };
     expect(delayAnalysis({ ...base, price: 0, cost: 1000 })).toBeNull();
     expect(delayAnalysis({ ...base, price: 5000, cost: 0 })).toBeNull();
     expect(delayAnalysis({ ...base, price: 5000, cost: 1000 })).not.toBeNull();
@@ -154,8 +154,8 @@ describe("categorías de reporte (Lote 4)", () => {
 describe("textos", () => {
   it("días y puntos de rentabilidad bien escritos, sin pp", () => {
     expect(formatDays(1)).toBe("1 día");
-    expect(formatWorkingDays(1)).toBe("1 día laboral");
-    expect(formatWorkingDays(12)).toBe("12 días laborales");
+    expect(formatWorkingDays(1)).toBe("1 día hábil");
+    expect(formatWorkingDays(12)).toBe("12 días hábiles");
     expect(formatMarginPoints(-9.2, { signed: true })).toBe("−9,2 puntos de rentabilidad");
     expect(formatMarginPoints(9.2, { short: true })).toBe("9,2 puntos");
     expect(formatMarginPoints(-9.2, { signed: true })).not.toMatch(/pp/);
