@@ -541,3 +541,35 @@ describe("Lote 4b · Diseño y Administración por separado", () => {
     expect(JSON.stringify(ws)).not.toContain("design");
   });
 });
+
+describe("Lote 4c · jornada del operario y empresa demo", () => {
+  it("la jornada se guarda con Gestión (9,5 h por defecto) y se valida entre 1 y 24", async () => {
+    expect(Number((await rows(laura, "select hours_per_day from cost_settings"))[0].hours_per_day)).toBe(9.5);
+    await asUser(db, laura, (tx) => tx.query("update cost_settings set hours_per_day = 8 where organization_id = $1", [org]));
+    expect(Number((await rows(laura, "select hours_per_day from cost_settings"))[0].hours_per_day)).toBe(8);
+    expect(await errorAs(db, laura, (tx) => tx.query("update cost_settings set hours_per_day = 30 where organization_id = $1", [org]))).toMatch(/check/);
+  });
+
+  it("Taller no ve la jornada ni la recibe en taller_workspace", async () => {
+    expect(await rows(juan, "select hours_per_day from cost_settings")).toHaveLength(0);
+    const [{ ws }] = await rows(juan, "select taller_workspace() as ws");
+    expect(JSON.stringify(ws)).not.toContain("hours_per_day");
+  });
+
+  it("la jornada usada queda en la línea de horas", async () => {
+    const p = seed.projects.find((x) => x.status === "quotation")!;
+    await asUser(db, laura, (tx) =>
+      tx.query(
+        "insert into budget_lines (organization_id, id, project_id, category, description, quantity, unit, unit_cost, total, hour_type, hours_per_day) values ($1, 'bl-j', $2, 'labor', 'x', 10, 'h', 19000, 190000, 'normal', 9.5)",
+        [org, p.id],
+      ),
+    );
+    expect(Number((await rows(laura, "select hours_per_day from budget_lines where id = 'bl-j'"))[0].hours_per_day)).toBe(9.5);
+  });
+
+  it("solo Gestión marca la empresa como demo", async () => {
+    await asUser(db, laura, (tx) => tx.query("update organizations set is_demo = true where id = $1", [org]));
+    expect((await rows(laura, "select is_demo from organizations"))[0].is_demo).toBe(true);
+    expect(await rows(juan, "update organizations set is_demo = false where id = $1 returning id", [org])).toHaveLength(0);
+  });
+});

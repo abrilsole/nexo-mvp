@@ -8,6 +8,7 @@ import { DeltaPoints } from "@/components/shared/margin-shift";
 import { ProgressBar } from "@/components/ui/progress";
 import { projectSchedule } from "@/lib/project-rules";
 import { formatCurrency, formatDate, formatPercent, todayISO } from "@/lib/formatting";
+import { HealthHelp } from "@/components/shared/health-help";
 
 export function ProjectsTable({ views, showSchedule = true }: { views: ProjectView[]; showSchedule?: boolean }) {
   const router = useRouter();
@@ -24,7 +25,11 @@ export function ProjectsTable({ views, showSchedule = true }: { views: ProjectVi
           <TH className="text-right">Rentabilidad esperada</TH>
           <TH className="text-right">Rentabilidad proyectada / real final</TH>
           <TH className="text-right">Desvío (puntos de rentabilidad)</TH>
-          <TH>Salud</TH>
+          <TH>
+            <span className="inline-flex items-center gap-1">
+              Salud <HealthHelp />
+            </span>
+          </TH>
         </TR>
       </THead>
       <TBody>

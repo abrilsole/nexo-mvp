@@ -4,9 +4,8 @@ import type { CalcState } from "./calculator-state";
 
 export interface QuoteDraft {
   state: CalcState;
+  /** "" = no se eligió tipo en el Cotizador (se elige en "Datos del proyecto"). */
   projectType: string;
-  startDate: string;
-  dueDate: string;
   salesPrice: number;
 }
 

@@ -21,6 +21,7 @@ import {
   type SuggestedPrice,
   type WorkSchedule,
 } from "@/lib/budget-calculator";
+import { delayAnalysis, type DelayResult } from "@/lib/delay";
 import { benchmarksForType, suggestedAdjustments, type CategoryBenchmark, type TypeBenchmarks } from "@/lib/historical-benchmarks";
 import type { BudgetLineInput } from "@/lib/project-operations";
 import { CATEGORY_LABELS, DEFAULT_FINANCIAL_PCT, HOUR_CATEGORIES, MATERIAL_CATALOG } from "@/lib/constants";
@@ -52,13 +53,17 @@ export interface RubroRow {
 
 export interface CalcState {
   rubros: RubroRow[];
-  /** Jornada diaria por operario. */
-  hoursPerDay: string;
+  /** Plazo en días hábiles (opcional). Sin plazo no hay horas extra. */
+  deadlineDays: string;
   materialsTargetPct: string;
   laborTargetPct: string;
   financialPct: string;
   /** Categorías cuyo ajuste por historial el usuario decidió aplicar. */
   appliedAdjustments: BudgetCategory[];
+  /** Atraso: multa o costo por día (opcional). */
+  delayPenalty: string;
+  /** Atraso: piso de rentabilidad en % ("" = la rentabilidad total del precio sugerido). */
+  delayFloorPct: string;
 }
 
 let seq = 0;
@@ -75,11 +80,13 @@ export function newRubroRow(rubro: RubroId): RubroRow {
 export function initialCalcState(financialPct = DEFAULT_FINANCIAL_PCT): CalcState {
   return {
     rubros: [newRubroRow("carpinteria_madera")],
-    hoursPerDay: "8",
+    deadlineDays: "",
     materialsTargetPct: "30",
     laborTargetPct: "30",
     financialPct: String(financialPct).replace(".", ","),
     appliedAdjustments: [],
+    delayPenalty: "",
+    delayFloorPct: "",
   };
 }
 
@@ -95,13 +102,13 @@ export interface CalculatorContext {
   projects: Project[];
   rates: HourRate[];
   overtimeMultiplier: number;
-  /** Fecha de entrega comprometida ("" = sin fecha). */
-  deadline: string;
+  /** Jornada del operario (Configuración): queda congelada en las líneas de horas. */
+  hoursPerDay: number;
   /** Precio de venta elegido (0 = todavía no): de él sale el gasto financiero. */
   salesPrice: number;
 }
 
-function calcStateToInput(s: CalcState, startDate: string, ctx: Pick<CalculatorContext, "rates" | "overtimeMultiplier" | "deadline">): QuoteInput {
+function calcStateToInput(s: CalcState, ctx: Pick<CalculatorContext, "rates" | "overtimeMultiplier" | "hoursPerDay">): QuoteInput {
   return {
     rubros: s.rubros.map((r) => ({
       rubro: r.rubro,
@@ -119,9 +126,8 @@ function calcStateToInput(s: CalcState, startDate: string, ctx: Pick<CalculatorC
       adminHours: n(r.adminHours),
       amount: n(r.amount),
     })),
-    hoursPerDay: n(s.hoursPerDay),
-    startDate,
-    deadline: ctx.deadline || null,
+    hoursPerDay: ctx.hoursPerDay,
+    deadlineDays: n(s.deadlineDays) || null,
     rates: ctx.rates,
     overtimeMultiplier: ctx.overtimeMultiplier,
     materialsTargetPct: n(s.materialsTargetPct),
@@ -167,13 +173,17 @@ export interface CalculatorResult {
   benchmarks: TypeBenchmarks;
   suggestions: CategoryBenchmark[];
   hasContent: boolean;
+  /** N del cálculo de atraso: el equipo más grande previsto (máximo de operarios de un rubro). */
+  crewSize: number;
+  /** ¿Qué pasa si el proyecto se alarga? null sin precio de venta o sin costo. */
+  delay: DelayResult | null;
 }
 
 /** Todo lo derivado de la cotización en un solo lugar (el Cotizador y Nuevo proyecto usan el mismo resultado). */
-export function computeCalculator(state: CalcState, startDate: string, projectType: string, ctx: CalculatorContext): CalculatorResult {
-  const input = calcStateToInput(state, startDate, ctx);
+export function computeCalculator(state: CalcState, projectType: string, ctx: CalculatorContext): CalculatorResult {
+  const input = calcStateToInput(state, ctx);
   const rates = ratesByCategory(ctx.rates);
-  const schedule = workSchedule(input.rubros, input.hoursPerDay, startDate, input.deadline);
+  const schedule = workSchedule(input.rubros, input.hoursPerDay, input.deadlineDays);
   const rubros = input.rubros.map((r, i): RubroResult => {
     const labor =
       rubroDef(r.rubro).kind === "full"
@@ -185,7 +195,7 @@ export function computeCalculator(state: CalcState, startDate: string, projectTy
             overtimeMultiplier: input.overtimeMultiplier,
           })
         : null;
-    const lines = rubroLines(r, labor, rates, input.overtimeMultiplier);
+    const lines = rubroLines(r, labor, { rates, overtimeMultiplier: input.overtimeMultiplier, hoursPerDay: input.hoursPerDay });
     return { key: state.rubros[i].key, rubro: r.rubro, labor, lines, total: totalOfLines(lines) };
   });
   const benchmarks = benchmarksForType(ctx.projects, projectType);
@@ -195,20 +205,35 @@ export function computeCalculator(state: CalcState, startDate: string, projectTy
   const costs = costGroups(withAdjustments);
   const financial = financialLine(input.financialPct, ctx.salesPrice);
   const lines = financial ? [...withAdjustments, financial] : withAdjustments;
+  const total = totalOfLines(lines);
+  const suggested = suggestedPrice(costs, input);
+  const crewSize = Math.max(0, ...input.rubros.map((r) => r.workers));
+  const floor = parseDecimal(state.delayFloorPct);
+  const delay = delayAnalysis({
+    price: ctx.salesPrice,
+    cost: total,
+    workers: crewSize,
+    hoursPerDay: input.hoursPerDay,
+    laborRate: rates.labor?.hourlyRate ?? 0,
+    dailyPenalty: n(state.delayPenalty),
+    floorPct: Number.isFinite(floor) ? floor : (suggested?.totalMargin ?? 0),
+  });
   return {
     input,
     rubros,
     schedule,
     overtimeHours: round2(rubros.reduce((s, r) => s + (r.labor?.overtimeHours ?? 0), 0)),
     lines,
-    total: totalOfLines(lines),
+    total,
     costs,
-    suggested: suggestedPrice(costs, input),
+    suggested,
     atPrice: ctx.salesPrice > 0 ? analyzePrice(ctx.salesPrice, costs, input.financialPct) : null,
     rates,
     benchmarks,
     suggestions,
     hasContent: withAdjustments.length > 0,
+    crewSize,
+    delay,
   };
 }
 
@@ -227,7 +252,7 @@ export function reviewWarnings(calc: CalculatorResult, salesPrice: number): stri
   if (missingRates.length > 0) out.push("Falta la tarifa de algún tipo de hora: cargala en Configuración para que esas horas sumen al costo.");
   if (schedule.fits === false) {
     out.push(
-      `Los días de trabajo estimados (${formatWorkingDays(schedule.workDays)}) no entran hasta la fecha de entrega (${formatWorkingDays(schedule.availableDays ?? 0)} hábiles): ` +
+      `Los días de trabajo estimados (${formatWorkingDays(schedule.workDays)}) no entran en el plazo (${formatWorkingDays(schedule.availableDays ?? 0)} hábiles): ` +
         `${formatNumber(calc.overtimeHours, 1)} h se calculan como horas extra.`,
     );
   }
@@ -235,4 +260,11 @@ export function reviewWarnings(calc: CalculatorResult, salesPrice: number): stri
     out.push(`El precio fue escrito a mano (el sugerido es ${formatCurrency(suggested.price)}): el desglose de rentabilidad por materiales y mano de obra solo aplica al precio sugerido.`);
   }
   return out;
+}
+
+/** Por qué todavía no se puede seguir (crear el proyecto o continuar). null = se puede. */
+export function quoteActionBlocker(calc: CalculatorResult, salesPrice: number): string | null {
+  if (!calc.hasContent) return "Cargá al menos un costo.";
+  if (!(salesPrice > 0)) return "Definí el precio de venta (podés usar el sugerido).";
+  return null;
 }

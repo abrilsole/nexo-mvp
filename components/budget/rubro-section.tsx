@@ -8,6 +8,7 @@ import { formatCurrency, formatNumber } from "@/lib/formatting";
 import { rubroDef } from "@/lib/rubros";
 import { parseDecimal } from "@/lib/schemas";
 import { Button } from "@/components/ui/button";
+import { HelpTip } from "@/components/ui/help-tip";
 import { NumField, RemoveButton, TextField } from "./fields";
 import { newMaterialRow, type MaterialRow, type RubroResult, type RubroRow } from "./calculator-state";
 
@@ -51,12 +52,16 @@ export function RubroSection({
         <div className="space-y-4">
           <div>
             <div className="mb-1 flex items-center justify-between">
-              <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Materiales</h4>
+              <h4 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Materiales
+                <HelpTip label="Materiales">
+                  Cantidad × costo unitario, más el desperdicio esperado. Para algo que se compra hecho o se corta, alcanza con cantidad 1 y el costo total.
+                </HelpTip>
+              </h4>
               <Button variant="outline" size="sm" onClick={() => onChange({ materials: [...row.materials, newMaterialRow()] })}>
                 <Plus /> Material
               </Button>
             </div>
-            <p className="mb-2 text-xs text-slate-500">Para algo que se compra hecho o se corta, alcanza con cantidad 1 y el costo total.</p>
             <div className="space-y-2">
               {row.materials.map((m, i) => (
                 <div key={m.key} className="grid grid-cols-2 gap-2 sm:grid-cols-[2fr_0.8fr_0.8fr_1fr_0.8fr_auto]">

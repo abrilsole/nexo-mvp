@@ -41,6 +41,9 @@ export const STATUS_LABELS: Record<ProjectStatus, string> = {
 /** Horas extra = costo por hora × multiplicador. Se cambia en Configuración (p. ej. 1,5 en días hábiles). */
 export const DEFAULT_OVERTIME_MULTIPLIER = 2;
 
+/** Jornada del operario por defecto (horas por día). Se cambia en Configuración (entre 1 y 24). */
+export const DEFAULT_HOURS_PER_DAY = 9.5;
+
 /** Gasto financiero por defecto: % sobre el precio de venta. A confirmar con el cliente. */
 export const DEFAULT_FINANCIAL_PCT = 5;
 

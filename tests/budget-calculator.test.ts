@@ -4,9 +4,7 @@ import type { HourRate } from "@/types";
 import {
   addWorkingDays,
   analyzePrice,
-  averageDailyLaborCost,
   costGroups,
-  delayAnalysis,
   financialLine,
   materialBudgetQuantity,
   ratesByCategory,
@@ -65,7 +63,7 @@ describe("cálculo por rubro", () => {
       admin: { hours: 4, rate: 27_000, cost: 108_000 },
       total: 1_790_000,
     });
-    const lines = rubroLines(madera, labor, rates, 2);
+    const lines = rubroLines(madera, labor, { rates, overtimeMultiplier: 2, hoursPerDay: 8 });
     expect(lines.map((l) => [l.category, l.rubro, l.quantity, l.unitCost])).toEqual([
       ["materials", "carpinteria_madera", 11, 50_000],
       ["labor", "carpinteria_madera", 80, 19_000],
@@ -76,7 +74,7 @@ describe("cálculo por rubro", () => {
   });
 
   it("cada hora guarda el tipo de hora y la tarifa vigente (congelada en la línea)", () => {
-    const [, laborLine, designLine, adminLine] = rubroLines(madera, rubroLabor(madera, full), rates, 2);
+    const [, laborLine, designLine, adminLine] = rubroLines(madera, rubroLabor(madera, full), { rates, overtimeMultiplier: 2, hoursPerDay: 8 });
     expect(designLine).toMatchObject({ hourRateId: "design", unitCost: 27_000 });
     expect(laborLine).toMatchObject({ hourRateId: "labor", hourType: "normal", unitCost: 19_000 });
     expect(adminLine).toMatchObject({ hourRateId: "admin", unitCost: 27_000 });
@@ -85,22 +83,22 @@ describe("cálculo por rubro", () => {
 
   it("un material comprado hecho: cantidad 1 y el costo total", () => {
     const r: QuoteRubro = { ...madera, materials: [{ name: "Vidrio templado cortado", unit: "u", quantity: 1, unitCost: 480_000, wastePct: 0 }], workers: 0, designHours: 0, adminHours: 0 };
-    const lines = rubroLines({ ...r, rubro: "vidrios" }, rubroLabor(r, full), rates, 2);
+    const lines = rubroLines({ ...r, rubro: "vidrios" }, rubroLabor(r, full), { rates, overtimeMultiplier: 2, hoursPerDay: 8 });
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({ category: "materials", rubro: "vidrios", quantity: 1, unitCost: 480_000 });
   });
 
   it("Transporte / Fletes e Imprevistos son solo un importe, en su categoría", () => {
-    expect(rubroLines(amount("transporte", 100_000), null, rates, 2)).toEqual([
+    expect(rubroLines(amount("transporte", 100_000), null, { rates, overtimeMultiplier: 2, hoursPerDay: 8 })).toEqual([
       { category: "transport", rubro: "transporte", description: "Transporte / Fletes", quantity: null, unit: "global", unitCost: 100_000 },
     ]);
-    expect(rubroLines(amount("imprevistos", 50_000), null, rates, 2)[0].category).toBe("contingency");
-    expect(rubroLines(amount("imprevistos", 0), null, rates, 2)).toEqual([]);
+    expect(rubroLines(amount("imprevistos", 50_000), null, { rates, overtimeMultiplier: 2, hoursPerDay: 8 })[0].category).toBe("contingency");
+    expect(rubroLines(amount("imprevistos", 0), null, { rates, overtimeMultiplier: 2, hoursPerDay: 8 })).toEqual([]);
   });
 
   it("ignora materiales sin descripción o sin cantidad", () => {
     const r = { ...madera, materials: [{ name: "", unit: "u", quantity: 3, unitCost: 1, wastePct: 0 }, { name: "Algo", unit: "u", quantity: 0, unitCost: 1, wastePct: 0 }] };
-    expect(rubroLines(r, null, rates, 2).some((l) => l.category === "materials")).toBe(false);
+    expect(rubroLines(r, null, { rates, overtimeMultiplier: 2, hoursPerDay: 8 }).some((l) => l.category === "materials")).toBe(false);
   });
 
   it("el costo cambia cuando cambian las horas o las tarifas", () => {
@@ -123,27 +121,24 @@ describe("cálculo por rubro", () => {
 });
 
 describe("días de trabajo y horas extra con N operarios", () => {
-  // Lunes 5/10/2026.
-  const START = "2026-10-05";
-
   it("días de trabajo = horas por operario / jornada, rubros uno detrás de otro", () => {
-    const s = workSchedule([madera, { ...madera, rubro: "pintura", hoursPerWorker: 24 }], 8, START, null);
+    const s = workSchedule([madera, { ...madera, rubro: "pintura", hoursPerWorker: 24 }], 8, null);
     expect(s).toMatchObject({ neededDays: 8, workDays: 8, availableDays: null, fits: null, normalShare: 1 });
   });
 
-  it("si entra en la fecha de entrega, no hay horas extra", () => {
-    const s = workSchedule([madera, { ...madera, rubro: "pintura", hoursPerWorker: 24 }], 8, START, "2026-10-14");
+  it("si entra en el plazo, no hay horas extra", () => {
+    const s = workSchedule([madera, { ...madera, rubro: "pintura", hoursPerWorker: 24 }], 8, 8);
     expect(s).toMatchObject({ availableDays: 8, fits: true, normalShare: 1 });
   });
 
   it("si no entra, las horas por operario que no entran son horas extra con el multiplicador", () => {
-    const s = workSchedule([madera], 8, START, "2026-10-07"); // 5 días de trabajo, 3 disponibles
+    const s = workSchedule([madera], 8, 3); // 5 días de trabajo, plazo de 3
     expect(s).toMatchObject({ workDays: 5, availableDays: 3, fits: false });
     expect(s.normalShare).toBeCloseTo(0.6);
     const l = rubroLabor(madera, { ...full, normalShare: s.normalShare });
     expect(l).toMatchObject({ normalHoursPerWorker: 24, overtimeHoursPerWorker: 16, normalHours: 48, overtimeHours: 32, overtimeRate: 38_000 });
     expect(l.normalCost + l.overtimeCost).toBe(48 * 19_000 + 32 * 38_000);
-    const lines = rubroLines(madera, l, rates, 2).filter((x) => x.category === "labor");
+    const lines = rubroLines(madera, l, { rates, overtimeMultiplier: 2, hoursPerDay: 8 }).filter((x) => x.category === "labor");
     expect(lines.map((x) => [x.hourType, x.quantity, x.unitCost])).toEqual([
       ["normal", 48, 19_000],
       ["overtime", 32, 38_000],
@@ -156,17 +151,13 @@ describe("días de trabajo y horas extra con N operarios", () => {
     expect(l.overtimeCost).toBe(32 * 28_500);
   });
 
-  it("acortar la fecha de entrega sube el costo", () => {
-    const cost = (deadline: string) => rubroLabor(madera, { ...full, normalShare: workSchedule([madera], 8, START, deadline).normalShare }).total;
-    expect(cost("2026-10-09")).toBe(1_790_000); // entra justo
-    expect(cost("2026-10-07")).toBeGreaterThan(cost("2026-10-09"));
-    expect(cost("2026-10-05")).toBeGreaterThan(cost("2026-10-07"));
+  it("acortar el plazo sube el costo", () => {
+    const cost = (days: number) => rubroLabor(madera, { ...full, normalShare: workSchedule([madera], 8, days).normalShare }).total;
+    expect(cost(5)).toBe(1_790_000); // entra justo
+    expect(cost(3)).toBeGreaterThan(cost(5));
+    expect(cost(1)).toBeGreaterThan(cost(3));
   });
 
-  it("el día promedio de trabajo sale de la mano de obra en horario normal", () => {
-    expect(averageDailyLaborCost([rubroLabor(madera, full)], 5)).toBe(1_520_000 / 5);
-    expect(averageDailyLaborCost([], 0)).toBe(0);
-  });
 });
 
 describe("precio sugerido con rentabilidad separada y gasto financiero", () => {
@@ -225,7 +216,7 @@ describe("precio sugerido con rentabilidad separada y gasto financiero", () => {
   });
 
   it("diseño y administración cuentan como mano de obra para el precio (a confirmar)", () => {
-    const lines = rubroLines(madera, rubroLabor(madera, full), rates, 2);
+    const lines = rubroLines(madera, rubroLabor(madera, full), { rates, overtimeMultiplier: 2, hoursPerDay: 8 });
     expect(costGroups(lines)).toEqual({ materials: 550_000, labor: 1_790_000, transport: 0, contingency: 0 });
   });
 });
@@ -242,14 +233,14 @@ describe("de la calculadora al costo presupuestado", () => {
       { ...newRubroRow("imprevistos"), amount: "50000" },
     ],
   };
-  const ctx = { projects: [], rates: RATES, overtimeMultiplier: 2, deadline: "", salesPrice: 0 };
+  const ctx = { projects: [], rates: RATES, overtimeMultiplier: 2, hoursPerDay: 8, salesPrice: 0 };
 
   it("sin precio: líneas por rubro, sin gasto financiero todavía; con precio, aparece la línea", () => {
-    const c = computeCalculator(state, "2026-10-05", "Local comercial", ctx);
+    const c = computeCalculator(state, "Local comercial", ctx);
     expect(c.total).toBe(2_490_000);
     expect(c.suggested?.price).toBe(4_125_314);
     expect(c.lines.some((l) => l.category === "financial")).toBe(false);
-    const priced = computeCalculator(state, "2026-10-05", "Local comercial", { ...ctx, salesPrice: c.suggested!.price });
+    const priced = computeCalculator(state, "Local comercial", { ...ctx, salesPrice: c.suggested!.price });
     expect(priced.lines.find((l) => l.category === "financial")?.unitCost).toBeCloseTo(206_265.7);
     expect(priced.total).toBeCloseTo(priced.atPrice!.totalCost);
     expect(priced.atPrice!.totalMargin).toBeCloseTo(34.64, 2);
@@ -257,13 +248,13 @@ describe("de la calculadora al costo presupuestado", () => {
 
   it("las tarifas de Configuración se aplican al cotizar y quedan en la línea", () => {
     const raised = RATES.map((r) => (r.id === "labor" ? { ...r, hourlyRate: 25_000 } : r));
-    const c = computeCalculator(state, "2026-10-05", "Local comercial", { ...ctx, rates: raised });
+    const c = computeCalculator(state, "Local comercial", { ...ctx, rates: raised });
     expect(c.lines.find((l) => l.category === "labor")).toMatchObject({ unitCost: 25_000, hourRateId: "labor" });
     expect(c.total).toBe(2_490_000 + 80 * 6_000);
   });
 
-  it("con fecha de entrega corta, las horas extra suman a Mano de obra", () => {
-    const c = computeCalculator(state, "2026-10-05", "Local comercial", { ...ctx, deadline: "2026-10-07" });
+  it("con un plazo corto, las horas extra suman a Mano de obra", () => {
+    const c = computeCalculator({ ...state, deadlineDays: "3" }, "Local comercial", ctx);
     expect(c.schedule.fits).toBe(false);
     const labor = c.lines.filter((l) => l.category === "labor");
     expect(labor.map((l) => l.hourType)).toEqual(["normal", "overtime"]);
@@ -271,25 +262,12 @@ describe("de la calculadora al costo presupuestado", () => {
   });
 
   it("cada línea guarda su rubro (salvo el gasto financiero)", () => {
-    const c = computeCalculator(state, "2026-10-05", "Local comercial", { ...ctx, salesPrice: 4_000_000 });
+    const c = computeCalculator(state, "Local comercial", { ...ctx, salesPrice: 4_000_000 });
     expect(c.lines.filter((l) => l.category !== "financial").every((l) => l.rubro)).toBe(true);
   });
 });
 
-describe("sensibilidad al atraso", () => {
-  it("la rentabilidad baja con cada día extra", () => {
-    const a = delayAnalysis({ baseCost: 700_000, salesPrice: 1_000_000, dailyCost: 160_000, targetMarginPct: 30 });
-    expect(a.points[0].margin).toBeCloseTo(30);
-    expect(a.points[1].margin).toBeCloseTo(14);
-    expect(a.extraDaysBeforeTarget).toBe(0);
-    expect(a.extraDaysToBreakEven).toBe(1);
-  });
-  it("si el precio deja colchón, informa cuántos días se pueden absorber", () => {
-    expect(delayAnalysis({ baseCost: 500_000, salesPrice: 1_000_000, dailyCost: 50_000, targetMarginPct: 30 }).extraDaysBeforeTarget).toBe(4);
-  });
-  it("sin precio no inventa resultados", () => {
-    expect(delayAnalysis({ baseCost: 500_000, salesPrice: 0, dailyCost: 50_000, targetMarginPct: 30 }).extraDaysBeforeTarget).toBeNull();
-  });
+describe("fechas", () => {
   it("fecha + días laborales salta fines de semana", () => {
     expect(addWorkingDays("2026-10-05", 5)).toBe("2026-10-12");
     expect(addWorkingDays("2026-10-09", 1)).toBe("2026-10-12");

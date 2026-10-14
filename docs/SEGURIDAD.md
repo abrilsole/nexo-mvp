@@ -65,6 +65,21 @@ Migración `20261014120000_lote4b_diseno_administracion.sql` (aplicada el 14/10/
   - cada empresa tiene los tres tipos de hora;
   - Taller no ve las tarifas de Diseño ni de Administración.
 
+## Lote 4c: jornada y empresa demo
+
+Migración `20261015120000_lote4c_jornada_y_demo.sql` (sin DROP):
+
+- **`cost_settings.hours_per_day`:** jornada del operario. La tabla ya era solo de Gestión: Taller no la lee.
+- **`budget_lines.hours_per_day`:** jornada congelada en cada línea de horas. La tabla es solo de Gestión.
+- **`organizations.is_demo`:** indica si la empresa tiene los datos de demostración.
+  - La empresa la leen sus miembros activos; solo Gestión la modifica (política existente).
+  - No es un dato de costos.
+- **Tests** en `tests/db/rls.test.ts` ("Lote 4c"):
+  - la jornada por defecto y su validación;
+  - Taller no la ve;
+  - la jornada queda en la línea de horas;
+  - solo Gestión cambia `is_demo`.
+
 ## Cómo verificarlo
 
 ### 1. Tests automáticos (sin tocar la base real)

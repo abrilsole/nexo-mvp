@@ -1,8 +1,10 @@
 "use client";
 // Campos chicos de la calculadora (números como texto para permitir vacíos).
+import type { ReactNode } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { HelpTip } from "@/components/ui/help-tip";
 
 export const NumField = ({
   id,
@@ -19,14 +21,17 @@ export const NumField = ({
   onChange: (v: string) => void;
   suffix?: string;
   placeholder?: string;
-  help?: string;
+  /** Explicación en una ⓘ al lado de la etiqueta (la etiqueta queda corta). */
+  help?: ReactNode;
 }) => (
   <div className="flex flex-col gap-1">
-    <label htmlFor={id} className="text-xs font-medium text-slate-600">{label}</label>
+    <div className="flex items-center gap-1">
+      <label htmlFor={id} className="text-xs font-medium text-slate-600">{label}</label>
+      {help && <HelpTip label={label}>{help}</HelpTip>}
+    </div>
     <div className="relative">
       <Input
         id={id}
-        aria-describedby={help ? `${id}-help` : undefined}
         inputMode="decimal"
         value={value}
         placeholder={placeholder ?? "0"}
@@ -35,7 +40,6 @@ export const NumField = ({
       />
       {suffix && <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">{suffix}</span>}
     </div>
-    {help && <p id={`${id}-help`} className="text-[11px] text-slate-500">{help}</p>}
   </div>
 );
 
@@ -65,3 +69,16 @@ export const RemoveButton = ({ label, onClick }: { label: string; onClick: () =>
     <Trash2 />
   </Button>
 );
+
+/** Bloque de la calculadora con título y, si hace falta, una ⓘ con la explicación. */
+export function Section({ title, help, children }: { title: string; help?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4" aria-label={title}>
+      <div className="mb-3 flex items-center gap-1">
+        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+        {help && <HelpTip label={title}>{help}</HelpTip>}
+      </div>
+      {children}
+    </section>
+  );
+}

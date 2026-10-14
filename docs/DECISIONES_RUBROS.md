@@ -1,6 +1,6 @@
 # Cotización por rubros (Lote 4)
 
-**Estado:** 14 de octubre de 2026 (Lote 4 + Lote 4b: Diseño y Administración por separado, y nuevo paso "Revisar y crear"). Surge del feedback de un fabricante piloto que cotiza con una planilla de costeo por producto terminado, dividida por rubros. **Lo que dijo el cliente son hipótesis, no hechos validados.** Todo lo marcado "a confirmar" está pensado para revisarlo con él.
+**Estado:** 15 de octubre de 2026 (Lote 4, 4b y 4c). Surge del feedback de un fabricante piloto que cotiza con una planilla de costeo por producto terminado, dividida por rubros. **Lo que dijo el cliente son hipótesis, no hechos validados.** Todo lo marcado "a confirmar" está pensado para revisarlo con él.
 
 ## 1. Rubros (catálogo cerrado)
 
@@ -118,7 +118,36 @@ Precio sugerido = ( Materiales / (1 − rentabilidad materiales)
 - Si los días de trabajo no entran en los días hábiles hasta la entrega, se avisa y la misma proporción de horas de cada rubro (días disponibles / días necesarios) pasa a horas extra, con la tarifa × el multiplicador de Configuración (2 por defecto). Se muestra el desglose normal / extra por rubro.
 - Se eliminaron "Entrega estimada" y "Usar esta fecha", que confundían.
 
-## 8. Qué quedó afuera
+## 8. Lote 4c: una sola pantalla de cotización, plazo y jornada
+
+- **El Cotizador y el paso "Costo presupuestado" de Nuevo proyecto son la misma pantalla** (`QuoteWorkspace`). Solo cambian:
+  - el contexto: en Nuevo proyecto se ven código, cliente y entrega;
+  - el botón final: "Crear proyecto con esta cotización" o "Continuar".
+  - El botón deshabilitado dice por qué ("Cargá al menos un costo." o falta el precio).
+- **Sin fechas en el Cotizador.** Las fechas reales se cargan al crear el proyecto. En el bloque "Días de trabajo" hay un único campo opcional, **Plazo (días hábiles)**:
+  - con plazo se calculan las horas extra como antes; sin plazo no hay horas extra;
+  - en Nuevo proyecto, el plazo de la cotización propone la fecha de entrega (inicio + plazo) y hay un botón "Usar esa fecha", pero no la pisa;
+  - si la cotización no tenía plazo, se propone el de las fechas del proyecto.
+- **Tipo de proyecto:** es un selector opcional dentro de "Aprendizaje de proyectos anteriores" (lo único que lo usa). En Nuevo proyecto se toma del paso 1.
+- **Jornada del operario:**
+  - Pasó a Configuración → Tarifas y horas: 9,5 h por defecto, entre 1 y 24 (`cost_settings.hours_per_day`).
+  - La usan los días de trabajo, las horas extra, la capacidad y el atraso.
+  - La jornada usada queda congelada en cada línea de horas (`budget_lines.hours_per_day`), junto con la tarifa.
+- **Resultado ordenado:** primero los tres objetivos con su nombre completo, después el precio sugerido con "Usar este precio" y al final el precio de venta. Los avisos aparecen solo cuando hacen falta.
+- **Aprendizaje:**
+  - Aparece debajo del Resultado y solo si hay costos.
+  - Es una tabla (categoría, desvío promedio, proyectos) con una acción por fila: "Sumar margen de seguridad".
+  - Lleva la etiqueta "Datos de demostración" cuando la empresa es demo.
+- **El resumen va una sola vez:** días de trabajo y plazo están solo en el panel lateral.
+- **Explicaciones largas:** pasaron a una ⓘ accesible (`components/ui/help-tip.tsx`), en toda la app.
+- **Atraso:** método nuevo, en `docs/CALCULO_ATRASO.md`.
+- **Configuración:**
+  - Pestañas: Alertas · Tarifas y horas · Costos · Datos.
+  - Un "Guardar" por sección, aviso de cambios sin guardar y "Restaurar valores por defecto".
+  - "Restaurar datos demo" solo aparece en una empresa demo (`organizations.is_demo`), y solo en Configuración → Datos.
+  - "Cómo se clasifica cada proyecto" pasó a una ⓘ al lado de la columna "Salud" en Proyectos.
+
+## 9. Qué quedó afuera
 
 - Etapas del proyecto, formulario de horas de Taller y roles (jefe de planta, compras): Lote 5.
 - Excel, Google Sheets, dashboards y mails: dependen de archivos que el cliente todavía no pasó.

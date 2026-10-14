@@ -4,7 +4,7 @@ import { projectMaterialFlow } from "@/lib/material-flow";
 import { formatCurrency } from "@/lib/formatting";
 import { useAppStore } from "@/store/use-app-store";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { InfoTooltip } from "@/components/ui/tooltip";
+import { HelpTip } from "@/components/ui/help-tip";
 import { cn } from "@/lib/utils";
 
 function Cell({ label, value, hint, tone, tooltip }: { label: string; value: number; hint: string; tone?: "cost" | "neutral"; tooltip?: string }) {
@@ -12,7 +12,7 @@ function Cell({ label, value, hint, tone, tooltip }: { label: string; value: num
     <div className={cn("rounded-lg border p-3", tone === "cost" ? "border-slate-300 bg-white" : "border-slate-200 bg-slate-50/60")}>
       <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
         {label}
-        {tooltip && <InfoTooltip content={tooltip} label={label} />}
+        {tooltip && <HelpTip label={label}>{tooltip}</HelpTip>}
       </div>
       <div className={cn("mt-1 text-lg font-semibold tabular", tone === "cost" ? "text-slate-900" : "text-slate-700")}>{formatCurrency(value)}</div>
       <div className="mt-0.5 text-xs text-slate-500">{hint}</div>

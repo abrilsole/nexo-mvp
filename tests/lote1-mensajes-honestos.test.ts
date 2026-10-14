@@ -5,7 +5,7 @@ import { projectEconomics } from "@/lib/calculations";
 import { openAlertCount, projectAlerts, projectHealth, splitAlerts, allAlerts } from "@/lib/alerts";
 import { remainingBudgetText } from "@/lib/insights";
 import { activityTimeline } from "@/lib/activity";
-import { showDelayChart } from "@/lib/budget-calculator";
+import { delayAnalysis } from "@/lib/delay";
 import { APP_NAME, CATEGORY_LABELS, CATEGORY_ORDER, DEFAULT_SETTINGS as S } from "@/lib/constants";
 import { formatDays, formatMarginPoints, formatWorkingDays } from "@/lib/formatting";
 import { buildSeed } from "@/lib/seed-data";
@@ -134,10 +134,11 @@ describe("sin precio de venta", () => {
     expect(econ.projectedProfit).toBeNull();
     expect(econ.expectedMargin).toBeNull();
   });
-  it("el gráfico de atraso necesita precio y más de un día laboral", () => {
-    expect(showDelayChart({ salesPrice: 0, workingDays: 10, dailyCost: 100, cost: 1000 })).toBe(false);
-    expect(showDelayChart({ salesPrice: 5000, workingDays: 1, dailyCost: 100, cost: 1000 })).toBe(false);
-    expect(showDelayChart({ salesPrice: 5000, workingDays: 2, dailyCost: 100, cost: 1000 })).toBe(true);
+  it("el cálculo de atraso necesita precio de venta y costo", () => {
+    const base = { workers: 2, hoursPerDay: 9.5, laborRate: 19_000, dailyPenalty: 0, floorPct: 30 };
+    expect(delayAnalysis({ ...base, price: 0, cost: 1000 })).toBeNull();
+    expect(delayAnalysis({ ...base, price: 5000, cost: 0 })).toBeNull();
+    expect(delayAnalysis({ ...base, price: 5000, cost: 1000 })).not.toBeNull();
   });
 });
 

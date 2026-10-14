@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AlertSettings, AppRole, CostSettings, HourRate, MaterialRequest, Operator, Project } from "@/types";
-import { DEFAULT_FINANCIAL_PCT, DEFAULT_HOUR_RATES, DEFAULT_OVERTIME_MULTIPLIER, DEFAULT_SETTINGS } from "@/lib/constants";
+import { DEFAULT_FINANCIAL_PCT, DEFAULT_HOUR_RATES, DEFAULT_HOURS_PER_DAY, DEFAULT_OVERTIME_MULTIPLIER, DEFAULT_SETTINGS } from "@/lib/constants";
 import type { StockState } from "@/lib/stock";
 import type { TallerCall } from "./taller";
 import { deriveLedgerFromLegacy } from "@/lib/stock-legacy";
@@ -51,6 +51,8 @@ export interface Workspace extends WorkspaceData {
   /** Tipos de hora con su tarifa. Solo Gestión: Taller recibe la lista por defecto sin usarla (nunca lee hour_rates). */
   hourRates: HourRate[];
   demoSeeded: boolean;
+  /** La empresa tiene cargados los datos de demostración (muestra "Restaurar datos demo"). */
+  isDemo: boolean;
   /**
    * true si la empresa tenía datos del modelo anterior (compras, usos, sobrantes) y todavía no tenía
    * stock: el ledger se derivó en memoria y hay que guardarlo.
@@ -75,7 +77,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
   const membership = check(
     await db
       .from("organization_members")
-      .select("organization_id, display_name, role, organizations(name, demo_seeded, alert_settings)")
+      .select("organization_id, display_name, role, organizations(name, demo_seeded, is_demo, alert_settings)")
       .eq("user_id", user.id)
       .order("created_at")
       .limit(1)
@@ -84,7 +86,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     organization_id: string;
     display_name: string;
     role: AppRole;
-    organizations: { name: string; demo_seeded: boolean; alert_settings: AlertSettings | null } | null;
+    organizations: { name: string; demo_seeded: boolean; is_demo: boolean; alert_settings: AlertSettings | null } | null;
   } | null;
   if (!membership) throw new Error("Tu usuario no tiene una empresa asociada.");
   // Taller no lee las tablas (tienen costos): todo lo suyo llega por taller_workspace().
@@ -151,6 +153,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     userEmail: user.email ?? "",
     role: membership.role,
     demoSeeded: membership.organizations.demo_seeded,
+    isDemo: membership.organizations.is_demo,
     costSettings,
     hourRates,
     projects: domainProjects,
@@ -163,9 +166,13 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
   };
 }
 
-export const DEFAULT_COST_SETTINGS: CostSettings = { overtimeMultiplier: DEFAULT_OVERTIME_MULTIPLIER, financialPct: DEFAULT_FINANCIAL_PCT };
+export const DEFAULT_COST_SETTINGS: CostSettings = {
+  overtimeMultiplier: DEFAULT_OVERTIME_MULTIPLIER,
+  financialPct: DEFAULT_FINANCIAL_PCT,
+  hoursPerDay: DEFAULT_HOURS_PER_DAY,
+};
 
-/** Multiplicador de horas extra y gasto financiero de la empresa (tabla de Gestión). Sin fila → valores por defecto. */
+/** Multiplicador de horas extra, gasto financiero y jornada de la empresa (tabla de Gestión). Sin fila → valores por defecto. */
 async function loadCostSettings(db: SupabaseClient, org: string): Promise<CostSettings> {
   const { data, error } = await db.from("cost_settings").select("*").eq("organization_id", org).maybeSingle();
   // Si la tabla todavía no existe en la base, se usa el valor por defecto en lugar de romper la carga.
@@ -216,6 +223,7 @@ async function loadTallerWorkspace(db: SupabaseClient, user: { id: string; email
     costSettings: { ...DEFAULT_COST_SETTINGS },
     hourRates: [],
     demoSeeded: true,
+    isDemo: false,
     stockMigrated: false,
     projects: projectsFromRows({
       projects: json.projects ?? [],
@@ -316,7 +324,13 @@ export async function saveCostSettings(db: SupabaseClient, org: string, settings
     await db
       .from("cost_settings")
       .upsert(
-        { organization_id: org, overtime_multiplier: settings.overtimeMultiplier, financial_pct: settings.financialPct, updated_at: new Date().toISOString() },
+        {
+          organization_id: org,
+          overtime_multiplier: settings.overtimeMultiplier,
+          financial_pct: settings.financialPct,
+          hours_per_day: settings.hoursPerDay,
+          updated_at: new Date().toISOString(),
+        },
         { onConflict: "organization_id" },
       ),
   );
@@ -359,4 +373,6 @@ export function workspacePayload(org: string, data: WorkspaceData | null): Recor
  */
 export async function replaceWorkspace(db: SupabaseClient, org: string, data: WorkspaceData | null) {
   check(await db.rpc("reset_workspace", { p_data: workspacePayload(org, data) }));
+  // Con la demo cargada la empresa queda como demo; al vaciar, deja de serlo.
+  check(await db.from("organizations").update({ is_demo: data !== null }).eq("id", org));
 }
