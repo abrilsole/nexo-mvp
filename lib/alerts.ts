@@ -138,7 +138,7 @@ export function projectAlerts(project: Project, settings: AlertSettings, today: 
     });
   }
 
-  // 5. Proyecto en ejecución sin operarios: nadie lo ve en Taller ni puede cargarle horas.
+  // 5. Proyecto en ejecución sin operarios: ningún operario lo ve ni puede cargarle horas.
   // Se resuelve sola al asignar a alguien (la alerta se deriva del equipo).
   if (EXECUTION_STATUSES.includes(project.status) && project.assignedOperatorIds.length === 0) {
     alerts.push({
@@ -147,7 +147,7 @@ export function projectAlerts(project: Project, settings: AlertSettings, today: 
       kind: "staffing",
       level: "warning",
       title: "Proyecto sin operario asignado",
-      message: `El proyecto está en la etapa ${STATUS_LABELS[project.status]} y no tiene operarios: nadie lo ve en Taller ni puede cargarle horas. Asigná a alguien desde “Editar equipo”.`,
+      message: `El proyecto está en la etapa ${STATUS_LABELS[project.status]} y no tiene operarios: ningún operario lo ve ni puede cargarle horas. Asigná a alguien desde “Editar equipo”.`,
     });
   }
 

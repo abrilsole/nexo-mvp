@@ -93,9 +93,9 @@ export function formatDays(days: number): string {
   return `${days} ${Math.abs(days) === 1 ? "día" : "días"}`;
 }
 
-/** "1 día laboral" / "12 días laborales". */
+/** "1 día hábil" / "12 días hábiles" (lunes a viernes). */
 export function formatWorkingDays(days: number): string {
-  return `${days} ${Math.abs(days) === 1 ? "día laboral" : "días laborales"}`;
+  return `${days} ${Math.abs(days) === 1 ? "día hábil" : "días hábiles"}`;
 }
 
 /** dd/mm/yyyy — acepta "yyyy-mm-dd" o ISO datetime. */

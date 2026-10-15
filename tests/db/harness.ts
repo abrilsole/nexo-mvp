@@ -5,6 +5,14 @@ import path from "node:path";
 import { PGlite, type Transaction } from "@electric-sql/pglite";
 
 const MIGRATIONS = path.resolve(import.meta.dirname, "../../supabase/migrations");
+// Partes que se corren a mano (tienen DROP o DELETE): se aplican en orden junto con las migraciones.
+const MANUAL = path.resolve(import.meta.dirname, "../../supabase/manual");
+
+/** Migraciones y partes manuales, en orden por nombre (fecha). */
+function sqlFiles(): { name: string; file: string }[] {
+  const list = (dir: string) => readdirSync(dir).filter((f) => f.endsWith(".sql")).map((name) => ({ name, file: path.join(dir, name) }));
+  return [...list(MIGRATIONS), ...list(MANUAL)].sort((a, b) => a.name.localeCompare(b.name));
+}
 
 const SUPABASE_STUBS = `
   create role anon nologin;
@@ -44,12 +52,20 @@ const SUPABASE_STUBS = `
   alter default privileges in schema public grant all on functions to authenticated, anon;
 `;
 
-export async function createDb(): Promise<PGlite> {
+/** Base con las migraciones aplicadas. Con `before`, solo las anteriores a ese prefijo (para probar una migración sobre datos viejos). */
+export async function createDb(opts: { before?: string } = {}): Promise<PGlite> {
   const db = new PGlite();
   await db.exec(SUPABASE_STUBS);
-  const files = readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort();
-  for (const f of files) await db.exec(readFileSync(path.join(MIGRATIONS, f), "utf8"));
+  for (const f of sqlFiles()) {
+    if (opts.before && f.name >= opts.before) break;
+    await db.exec(readFileSync(f.file, "utf8"));
+  }
   return db;
+}
+
+/** Aplica las migraciones (y partes manuales) desde el prefijo `from` en adelante. */
+export async function migrateFrom(db: PGlite, from: string): Promise<void> {
+  for (const f of sqlFiles()) if (f.name >= from) await db.exec(readFileSync(f.file, "utf8"));
 }
 
 /** Corre `fn` como un usuario logueado (rol authenticated con su id), igual que la API de Supabase. */

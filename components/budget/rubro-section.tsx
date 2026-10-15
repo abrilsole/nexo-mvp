@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { NumField, RemoveButton, TextField } from "./fields";
 import { newMaterialRow, type MaterialRow, type RubroResult, type RubroRow } from "./calculator-state";
+import { useCatalogPrice } from "@/store/selectors";
 
 const h = (n: number) => `${formatNumber(n, 2)} h`;
 const num = (s: string) => {
@@ -31,6 +32,7 @@ export function RubroSection({
 }) {
   const def = rubroDef(row.rubro);
   const labor = result?.labor ?? null;
+  const catalogPrice = useCatalogPrice();
   const setMaterial = (key: string, patch: Partial<MaterialRow>) =>
     onChange({ materials: row.materials.map((m) => (m.key === key ? { ...m, ...patch } : m)) });
 
@@ -74,7 +76,7 @@ export function RubroSection({
                       placeholder="Ej.: Melamina blanca 18 mm"
                       onChange={(v) => {
                         const cat = MATERIAL_CATALOG.find((c) => c.name === v);
-                        setMaterial(m.key, { name: v, ...(cat ? { unit: cat.unit, unitCost: m.unitCost || String(cat.referenceCost) } : {}) });
+                        setMaterial(m.key, { name: v, ...(cat ? { unit: cat.unit, unitCost: m.unitCost || String(catalogPrice(cat.id)) } : {}) });
                       }}
                     />
                   </div>

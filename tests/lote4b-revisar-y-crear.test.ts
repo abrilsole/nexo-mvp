@@ -31,7 +31,7 @@ const base = state([
   { ...newRubroRow("transporte"), amount: "100000" },
   { ...newRubroRow("imprevistos"), amount: "50000" },
 ]);
-const ctx = { projects: [], rates: RATES, overtimeMultiplier: 2, hoursPerDay: 8, salesPrice: 6_000_000 };
+const ctx = { projects: [], rates: RATES, overtimeMultiplier: 2, hoursPerDay: 8, salesPrice: 6_000_000, isDemo: false };
 const calc = (s: CalcState, patch: Partial<typeof ctx> = {}) => computeCalculator(s, "Local comercial", { ...ctx, ...patch });
 
 describe("tabla por rubro del paso Revisar y crear", () => {
@@ -98,8 +98,8 @@ describe("supuestos y avisos del paso Revisar y crear", () => {
   it("sin avisos cuando el precio es el sugerido y la fecha entra", () => {
     const longPlazo = { ...base, deadlineDays: "20" };
     const c0 = calc(longPlazo);
-    const c = calc(longPlazo, { salesPrice: c0.suggested!.price });
-    expect(reviewWarnings(c, c0.suggested!.price)).toEqual([]);
+    const c = calc(longPlazo, { salesPrice: c0.breakdown.suggestedPrice! });
+    expect(reviewWarnings(c, c0.breakdown.suggestedPrice!)).toEqual([]);
   });
 
   it("todos los avisos juntos: fecha que no entra con horas extra, precio a mano y precio faltante", () => {

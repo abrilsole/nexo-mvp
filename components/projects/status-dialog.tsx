@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 const NOTES: Partial<Record<ProjectStatus, string>> = {
   approved: "Al aprobar, el costo presupuestado queda guardado como presupuesto base (línea base): no se modifica, solo se compara.",
   purchasing: "En la etapa Compras se registran las compras y se asigna material al proyecto.",
-  production: "Desde Producción, Taller puede registrar horas y consumos de los operarios asignados.",
+  production: "Desde Producción, los operarios asignados pueden registrar horas y consumos.",
 };
 
 /** Cambio de etapa de a un paso. Volver atrás es una corrección y pide confirmación. */
@@ -56,7 +56,7 @@ export function StatusDialog({ project, open, onOpenChange }: { project: Project
               ) : (
                 <div className="mt-2 space-y-2">
                   <p className="text-sm text-amber-900">
-                    ¿Confirmás volver a <strong>{STATUS_LABELS[back]}</strong>? Queda registrado como corrección. {back === "quotation" || back === "approved" ? "Taller deja de poder cargar registros." : ""}
+                    ¿Confirmás volver a <strong>{STATUS_LABELS[back]}</strong>? Queda registrado como corrección. {back === "quotation" || back === "approved" ? "Los operarios dejan de poder cargar registros." : ""}
                   </p>
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" onClick={() => setBack("")}>No</Button>

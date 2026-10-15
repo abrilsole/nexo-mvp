@@ -123,7 +123,7 @@ export function UsageForm({
         <p className="font-medium text-slate-800">Este proyecto no tiene material asignado</p>
         <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">
           {big
-            ? "Solo se puede registrar material que esté comprado o asignado a este proyecto. Pedilo y Gestión lo asigna, lo compra o lo transfiere."
+            ? "Solo se puede registrar material que esté comprado o asignado a este proyecto. Pedilo y un usuario Administrativo lo asigna, lo compra o lo transfiere."
             : "Registrá una compra o asigná material del stock desde la pestaña Materiales. Solo se puede consumir lo que el proyecto tiene asignado."}
         </p>
         {big && onRequestMaterial && (

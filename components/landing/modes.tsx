@@ -78,7 +78,7 @@ export function Modes() {
         />
         <div className="mt-14 grid gap-4 lg:grid-cols-2">
           <div className="overflow-hidden rounded-3xl border border-line bg-white p-8 shadow-[0_1px_2px_rgb(11_13_23/0.04)] sm:p-10">
-            <span className="text-xs font-semibold tracking-wide text-accent uppercase">Modo Taller · mobile</span>
+            <span className="text-xs font-semibold tracking-wide text-accent uppercase">Modo Operario · mobile</span>
             <h3 className="mt-3 text-2xl font-semibold tracking-[-0.03em] text-ink">Registrar el mundo físico en menos de 30 segundos</h3>
             <PointList items={WORKSHOP_POINTS} />
             <div className="relative mt-10 -mb-24">
@@ -92,7 +92,7 @@ export function Modes() {
           <div className="relative overflow-hidden rounded-3xl bg-ink p-8 text-white sm:p-10">
             <div className="landing-glow pointer-events-none absolute inset-0 opacity-60" aria-hidden />
             <div className="relative">
-              <span className="text-xs font-semibold tracking-wide text-[#a5acff] uppercase">Modo Gestión · desktop</span>
+              <span className="text-xs font-semibold tracking-wide text-[#a5acff] uppercase">Modo Administrativo · desktop</span>
               <h3 className="mt-3 text-2xl font-semibold tracking-[-0.03em]">Ver rentabilidad, excepciones y desvíos</h3>
               <ul className="mt-6 space-y-3">
                 {MANAGEMENT_POINTS.map((t) => (

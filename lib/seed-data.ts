@@ -29,8 +29,8 @@ import { applyUsageToPool, poolAvailableFor } from "./reusable-pool";
 import { deriveLedgerFromLegacy } from "./stock-legacy";
 import type { StockState } from "./stock";
 
-const MGMT = DEMO_USERS.management.name;
-const PLANTA = DEMO_USERS.workshop.name;
+const MGMT = DEMO_USERS.admin.name;
+const PLANTA = DEMO_USERS.jefe_planta.name;
 
 interface BudgetSpec {
   materials: Array<[materialId: string, qty: number, unitCost: number]>;

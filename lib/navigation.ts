@@ -19,6 +19,8 @@ export const SECTION_LABELS: Record<string, string> = {
   operators: "Operarios",
   settings: "Configuración",
   materials: "Materiales",
+  compras: "Materiales por proyecto",
+  planta: "Operarios y proyectos",
 };
 
 /**

@@ -58,7 +58,7 @@ export function DeactivatePanel({ operator, onCancel, onDone }: { operator: Oper
   return (
     <div className="space-y-3 text-sm">
       <p className="text-slate-800">
-        ¿Dar de baja a <strong>{operator.name}</strong>? Deja de aparecer en los equipos y en Taller. Sus horas y costos registrados no cambian.
+        ¿Dar de baja a <strong>{operator.name}</strong>? Deja de aparecer en los equipos y ya no puede entrar como Operario. Sus horas y costos registrados no cambian.
         Podés reactivarlo cuando quieras.
       </p>
 
@@ -98,7 +98,7 @@ export function DeactivatePanel({ operator, onCancel, onDone }: { operator: Oper
 
       {openRequests > 0 && (
         <p className="text-slate-600">
-          Tiene {openRequests === 1 ? "1 pedido de material abierto" : `${openRequests} pedidos de material abiertos`}: siguen visibles para Gestión en Stock → Pedidos de taller.
+          Tiene {openRequests === 1 ? "1 pedido de material abierto" : `${openRequests} pedidos de material abiertos`}: siguen visibles para Administrativo en Stock → Pedidos de taller.
         </p>
       )}
 

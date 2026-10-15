@@ -39,7 +39,7 @@ export function DashboardMockup({ className }: { className?: string }) {
         className,
       )}
       role="img"
-      aria-label={`Vista del Modo Gestión de ${APP_NAME}: rentabilidad esperada 40%, rentabilidad proyectada 30,8% y alerta de materiales en el proyecto Local Palermo.`}
+      aria-label={`Vista del Modo Administrativo de ${APP_NAME}: rentabilidad esperada 40%, rentabilidad proyectada 30,8% y alerta de materiales en el proyecto Local Palermo.`}
     >
       <div className="overflow-hidden rounded-2xl border border-line bg-canvas sm:rounded-[20px]" aria-hidden>
         {/* barra superior */}

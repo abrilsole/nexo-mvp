@@ -1,10 +1,12 @@
 "use client";
 // Hooks derivados: combinan estado + funciones puras. Memoizados para no recalcular en cada render.
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import type { Alert, EconomicHealth, Project } from "@/types";
 import { allAlerts, openAlertCount, projectHealth, splitAlerts } from "@/lib/alerts";
 import { projectEconomics, type ProjectEconomics } from "@/lib/calculations";
 import { todayISO } from "@/lib/formatting";
+import { isManager } from "@/lib/project-rules";
+import { catalogPriceAt } from "@/lib/material-options";
 import { effectiveIdentity, useAppStore } from "./use-app-store";
 
 export function useToday(): string {
@@ -54,6 +56,7 @@ export function useProjectView(id: string): ProjectView | undefined {
 export function useIdentity() {
   const role = useAppStore((s) => s.role);
   const currentMode = useAppStore((s) => s.currentMode);
+  const isDemo = useAppStore((s) => s.isDemo);
   const operators = useAppStore((s) => s.operators);
   const userId = useAppStore((s) => s.userId);
   const userEmail = useAppStore((s) => s.userEmail);
@@ -61,9 +64,15 @@ export function useIdentity() {
   const userName = useAppStore((s) => s.userName);
   return useMemo(
     () => {
-      const id = effectiveIdentity({ role, currentMode, operators, userId, userEmail, actingOperatorId, userName });
-      return { ...id, isManager: id.role !== "operator", realRole: role };
+      const id = effectiveIdentity({ role, currentMode, isDemo, operators, userId, userEmail, actingOperatorId, userName });
+      return { ...id, isManager: isManager(id.role), realRole: role };
     },
-    [role, currentMode, operators, userId, userEmail, actingOperatorId, userName],
+    [role, currentMode, isDemo, operators, userId, userEmail, actingOperatorId, userName],
   );
+}
+
+/** Precio de catálogo vigente hoy de un material (precios con vigencia): lo usan las cotizaciones nuevas. */
+export function useCatalogPrice(): (materialId: string) => number {
+  const history = useAppStore((s) => s.priceHistory);
+  return useCallback((materialId: string) => catalogPriceAt(history, materialId, todayISO()), [history]);
 }

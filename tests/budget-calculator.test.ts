@@ -233,17 +233,17 @@ describe("de la calculadora al costo presupuestado", () => {
       { ...newRubroRow("imprevistos"), amount: "50000" },
     ],
   };
-  const ctx = { projects: [], rates: RATES, overtimeMultiplier: 2, hoursPerDay: 8, salesPrice: 0 };
+  const ctx = { projects: [], rates: RATES, overtimeMultiplier: 2, hoursPerDay: 8, salesPrice: 0, isDemo: false };
 
   it("sin precio: líneas por rubro, sin gasto financiero todavía; con precio, aparece la línea", () => {
     const c = computeCalculator(state, "Local comercial", ctx);
     expect(c.total).toBe(2_490_000);
-    expect(c.suggested?.price).toBe(4_125_314);
+    expect(c.breakdown.suggestedPrice).toBe(4_125_314);
     expect(c.lines.some((l) => l.category === "financial")).toBe(false);
-    const priced = computeCalculator(state, "Local comercial", { ...ctx, salesPrice: c.suggested!.price });
+    const priced = computeCalculator(state, "Local comercial", { ...ctx, salesPrice: c.breakdown.suggestedPrice! });
     expect(priced.lines.find((l) => l.category === "financial")?.unitCost).toBeCloseTo(206_265.7);
-    expect(priced.total).toBeCloseTo(priced.atPrice!.totalCost);
-    expect(priced.atPrice!.totalMargin).toBeCloseTo(34.64, 2);
+    expect(priced.total).toBeCloseTo(priced.breakdown.totalCost);
+    expect(priced.breakdown.margin).toBeCloseTo(34.64, 2);
   });
 
   it("las tarifas de Configuración se aplican al cotizar y quedan en la línea", () => {
@@ -258,7 +258,7 @@ describe("de la calculadora al costo presupuestado", () => {
     expect(c.schedule.fits).toBe(false);
     const labor = c.lines.filter((l) => l.category === "labor");
     expect(labor.map((l) => l.hourType)).toEqual(["normal", "overtime"]);
-    expect(c.costs.labor).toBe(48 * 19_000 + 32 * 38_000 + 270_000);
+    expect(c.breakdown.labor.cost).toBe(48 * 19_000 + 32 * 38_000 + 270_000);
   });
 
   it("cada línea guarda su rubro (salvo el gasto financiero)", () => {

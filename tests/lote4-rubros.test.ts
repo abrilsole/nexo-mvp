@@ -75,8 +75,8 @@ describe("tarifas y gasto financiero en la base", () => {
     expect(hourRateFromRow({ ...row, hourly_rate: "27000" })).toEqual(rate);
   });
   it("sin valores válidos se usan los de por defecto", () => {
-    expect(costSettingsFromRow({ overtime_multiplier: "1.5", financial_pct: "4", hours_per_day: "8" })).toEqual({ overtimeMultiplier: 1.5, financialPct: 4, hoursPerDay: 8 });
-    expect(costSettingsFromRow({ overtime_multiplier: null, financial_pct: null, hours_per_day: null })).toEqual({ overtimeMultiplier: 2, financialPct: 5, hoursPerDay: 9.5 });
+    expect(costSettingsFromRow({ overtime_multiplier: "1.5", financial_pct: "4", hours_per_day: "8" })).toEqual({ overtimeMultiplier: 1.5, financialPct: 4, hoursPerDay: 8, laborValuation: "operator" });
+    expect(costSettingsFromRow({ overtime_multiplier: null, financial_pct: null, hours_per_day: null })).toEqual({ overtimeMultiplier: 2, financialPct: 5, hoursPerDay: 9.5, laborValuation: "operator" });
     expect(costSettingsFromRow({ overtime_multiplier: "2", financial_pct: "5", hours_per_day: "30" }).hoursPerDay).toBe(9.5);
   });
 });

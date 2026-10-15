@@ -35,7 +35,7 @@ export function Pilot() {
             <p className="mt-2 text-sm text-ink-soft">Explorá {APP_NAME} con la empresa ficticia Madera Sur S.R.L.</p>
             <List
               items={[
-                "Modo Gestión y Modo Taller",
+                "Cuatro roles: Administrativo, Compras, Jefe de planta y Operario",
                 "Un proyecto principal con desvío real de materiales",
                 "Registro de taller desde el celular",
                 "Alertas, sobrantes, cierre e historial",

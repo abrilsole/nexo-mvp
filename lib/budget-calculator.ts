@@ -11,6 +11,7 @@ import type { BudgetCategory, HourCategory, HourRate, RubroId } from "@/types";
 import type { BudgetLineInput } from "./project-operations";
 import { laborAmount, splitOvertime } from "./capacity";
 import { RUBROS, rubroDef } from "./rubros";
+import { CATEGORY_LABELS } from "./constants";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const finite = (n: number) => (Number.isFinite(n) ? n : 0);
@@ -62,10 +63,13 @@ export interface QuoteInput extends QuoteTargets {
   overtimeMultiplier: number;
 }
 
-/** Ajuste por historial: % extra sobre una categoría, con su fundamento (muestra). */
+/** Margen de seguridad: % extra sobre una categoría (editable), con su fundamento en proyectos anteriores. */
 export interface CalcAdjustment {
   category: BudgetCategory;
+  /** % aplicado (lo puede editar el usuario). */
   pct: number;
+  /** Desvío promedio de los proyectos comparables, en %. */
+  referencePct: number;
   sampleSize: number;
   projectType: string;
 }
@@ -265,7 +269,7 @@ export function rubroLines(r: QuoteRubro, labor: RubroLabor | null, { rates, ove
   return lines;
 }
 
-/** Ajustes por historial: línea explícita dentro de su categoría, sin rubro. */
+/** Márgenes de seguridad: línea explícita y trazable dentro de su categoría, sin rubro. */
 export function adjustmentLines(lines: BudgetLineInput[], adjustments: CalcAdjustment[]): BudgetLineInput[] {
   const out: BudgetLineInput[] = [];
   for (const a of adjustments) {
@@ -274,11 +278,11 @@ export function adjustmentLines(lines: BudgetLineInput[], adjustments: CalcAdjus
     if (amount <= 0) continue;
     out.push({
       category: a.category,
-      description: `Ajuste por historial (+${round2(a.pct)}%)`,
+      description: `Margen de seguridad ${CATEGORY_LABELS[a.category].toLowerCase()} (+${num(a.pct)}%)`,
       quantity: null,
       unit: "global",
       unitCost: amount,
-      notes: `Proyectos "${a.projectType}" finalizados (${a.sampleSize}) cerraron en promedio ${round2(a.pct)}% sobre lo presupuestado en esta categoría.`,
+      notes: `+${num(a.pct)}% sobre ${num(base)}. Referencia: ${a.sampleSize} proyectos "${a.projectType}" finalizados costaron en promedio ${num(a.referencePct)}% más de lo presupuestado en esta categoría.`,
     });
   }
   return out;
@@ -414,7 +418,84 @@ export function suggestedPrice(costs: CostGroups, t: QuoteTargets): SuggestedPri
   };
 }
 
-/** Suma `days` días laborales (lun–vie) a una fecha ISO yyyy-mm-dd. */
+// ── Desglose del resumen (panel, Resultado y "Revisar y crear") ─
+
+export interface BreakdownGroup {
+  /** Costo del grupo, con su margen de seguridad si se aplicó. */
+  cost: number;
+  /** Parte del costo que es margen de seguridad (líneas sin rubro). */
+  safetyMargin: number;
+  /** Rentabilidad objetivo del grupo, en % (se edita en Resultado). */
+  targetPct: number;
+  /** Venta del grupo = costo / (1 − objetivo). Solo con el precio sugerido; null si el precio se escribió a mano. */
+  sale: number | null;
+}
+
+export interface QuoteBreakdown {
+  materials: BreakdownGroup;
+  /** Mano de obra total = operarios + diseño + administración (+ margen de seguridad). */
+  labor: BreakdownGroup & { operators: number; design: number; admin: number };
+  transport: number;
+  contingency: number;
+  financial: { pct: number; amount: number };
+  /** Costo total con el gasto financiero del precio. Todo sin IVA. */
+  totalCost: number;
+  /** Precio usado: el elegido o, si todavía no hay, el sugerido (0 si no hay ninguno). Sin IVA. */
+  price: number;
+  priceSource: "chosen" | "suggested" | "none";
+  suggestedPrice: number | null;
+  /** true si el precio es el sugerido (escrito o tomado con "Usar este precio"). */
+  usesSuggested: boolean;
+  profit: number | null;
+  /** Rentabilidad total: ganancia / precio, en %. */
+  margin: number | null;
+}
+
+/**
+ * Desglose único del resumen, como la planilla de costeo del cliente: materiales y mano de obra con su costo,
+ * rentabilidad y venta; transporte, imprevistos, gasto financiero; costo total, precio, ganancia y rentabilidad.
+ * Lo usan el panel derecho, Resultado y "Revisar y crear".
+ */
+export function quoteBreakdown(lines: BudgetLineInput[], t: QuoteTargets, chosenPrice: number): QuoteBreakdown {
+  const costLines = lines.filter((l) => l.category !== "financial");
+  const sum = (filter: (l: BudgetLineInput) => boolean) => totalOfLines(costLines.filter(filter));
+  const costs = costGroups(costLines);
+  const suggested = suggestedPrice(costs, t);
+  const priceSource = chosenPrice > 0 ? "chosen" : suggested ? "suggested" : "none";
+  const price = chosenPrice > 0 ? chosenPrice : (suggested?.price ?? 0);
+  const usesSuggested = suggested !== null && price === suggested.price;
+  const analysis = analyzePrice(price, costs, t.financialPct);
+  const margin = (cats: BudgetCategory[]) => sum((l) => !l.rubro && cats.includes(l.category));
+  return {
+    materials: {
+      cost: costs.materials,
+      safetyMargin: margin(["materials"]),
+      targetPct: t.materialsTargetPct,
+      sale: usesSuggested && suggested ? suggested.materialsPrice : null,
+    },
+    labor: {
+      cost: costs.labor,
+      operators: sum((l) => !!l.rubro && l.category === "labor"),
+      design: sum((l) => !!l.rubro && l.category === "design"),
+      admin: sum((l) => !!l.rubro && l.category === "admin"),
+      safetyMargin: margin(["labor", "design", "admin"]),
+      targetPct: t.laborTargetPct,
+      sale: usesSuggested && suggested ? suggested.laborPrice : null,
+    },
+    transport: costs.transport,
+    contingency: costs.contingency,
+    financial: { pct: t.financialPct, amount: analysis.financialCost },
+    totalCost: analysis.totalCost,
+    price,
+    priceSource,
+    suggestedPrice: suggested?.price ?? null,
+    usesSuggested,
+    profit: price > 0 ? round2(price - analysis.totalCost) : null,
+    margin: analysis.totalMargin,
+  };
+}
+
+/** Suma `days` días hábiles (lun–vie) a una fecha ISO yyyy-mm-dd. */
 export function addWorkingDays(startISO: string, days: number): string {
   const [y, m, d] = startISO.split("-").map(Number);
   const date = new Date(Date.UTC(y, m - 1, d));

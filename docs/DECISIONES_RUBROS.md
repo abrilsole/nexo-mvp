@@ -134,10 +134,7 @@ Precio sugerido = ( Materiales / (1 − rentabilidad materiales)
   - La usan los días de trabajo, las horas extra, la capacidad y el atraso.
   - La jornada usada queda congelada en cada línea de horas (`budget_lines.hours_per_day`), junto con la tarifa.
 - **Resultado ordenado:** primero los tres objetivos con su nombre completo, después el precio sugerido con "Usar este precio" y al final el precio de venta. Los avisos aparecen solo cuando hacen falta.
-- **Aprendizaje:**
-  - Aparece debajo del Resultado y solo si hay costos.
-  - Es una tabla (categoría, desvío promedio, proyectos) con una acción por fila: "Sumar margen de seguridad".
-  - Lleva la etiqueta "Datos de demostración" cuando la empresa es demo.
+- **Aprendizaje:** una tabla con "Sumar margen de seguridad" (reemplazada en el Lote 4d, ver 8b).
 - **El resumen va una sola vez:** días de trabajo y plazo están solo en el panel lateral.
 - **Explicaciones largas:** pasaron a una ⓘ accesible (`components/ui/help-tip.tsx`), en toda la app.
 - **Atraso:** método nuevo, en `docs/CALCULO_ATRASO.md`.
@@ -146,6 +143,18 @@ Precio sugerido = ( Materiales / (1 − rentabilidad materiales)
   - Un "Guardar" por sección, aviso de cambios sin guardar y "Restaurar valores por defecto".
   - "Restaurar datos demo" solo aparece en una empresa demo (`organizations.is_demo`), y solo en Configuración → Datos.
   - "Cómo se clasifica cada proyecto" pasó a una ⓘ al lado de la columna "Salud" en Proyectos.
+
+## 8b. Lote 4d: resumen como la planilla del cliente, atraso y aprendizaje
+
+- **Un solo desglose:** `quoteBreakdown` (`lib/budget-calculator.ts`) arma materiales (costo, rentabilidad, venta), mano de obra (operarios + diseño + administración), transporte, imprevistos, gasto financiero (% y monto), costo total, precio, ganancia y rentabilidad. Lo usan el panel lateral, Resultado y "Revisar y crear": no hay otra cuenta.
+- **Caso del cliente (test):** materiales 50.000, operarios 57.000, diseño 27.000, administración 54.000, rentabilidades 30 % y 30 %, gasto financiero 5 % → precio 282.707, costo 202.135, rentabilidad 28,5 %.
+- **Panel lateral:** mismo contenido en el Cotizador y en Nuevo proyecto. Las rentabilidades se ven pero se cambian en Resultado. Transporte e imprevistos solo si hay importe.
+- **Sin IVA:** precio y costos dicen "sin IVA" en toda la pantalla.
+- **"Revisar y crear":** una sola vista (tabla por rubro + totales + Supuestos), "plazo estimado" en vez de "entrega comprometida", precio con separador de miles.
+- **Aprendizaje:** una línea dentro de Resultado ("En N proyectos parecidos, Materiales costó X% más de lo presupuestado"), rotulada DEMO en la empresa demo. Solo con 3 o más proyectos comparables (en la demo se muestra igual). Con menos de 10 sigue siendo un indicio. Función pura: `learningInsights` (`lib/historical-benchmarks.ts`).
+- **Margen de seguridad:** "Aplicar margen de seguridad" agrega una línea editable ("Margen de seguridad materiales +10,9% = +$X") que se puede quitar. Se guarda con el presupuesto como una línea más del costo presupuestado, con la referencia en la nota (cuántos proyectos, de qué tipo y cuánto se desviaron): queda trazable. No hizo falta migración.
+- **Atraso:** ver `docs/CALCULO_ATRASO.md` (días de trabajo extra, escenarios proporcionales, sin gráfico).
+- **Corrección:** con el piso de rentabilidad vacío, el atraso usaba 0 % en vez de la rentabilidad del precio sugerido.
 
 ## 9. Qué quedó afuera
 

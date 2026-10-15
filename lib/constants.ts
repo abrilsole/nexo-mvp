@@ -59,8 +59,11 @@ export const DEFAULT_HOUR_RATES: HourRate[] = [
 
 export const ACTIVE_STATUSES: ProjectStatus[] = ["approved", "purchasing", "production", "installation"];
 
-/** El presupuesto base solo se edita antes de ejecutar. Luego es la línea base contra la que se mide. */
-export const BUDGET_EDITABLE_STATUSES: ProjectStatus[] = ["quotation", "approved"];
+/**
+ * El costo presupuestado solo se edita en Cotización. Desde Aprobado queda congelado (Lote 5A; antes también
+ * se editaba en Aprobado): se corrige con un registro auditado (lib/corrections.ts).
+ */
+export const BUDGET_EDITABLE_STATUSES: ProjectStatus[] = ["quotation"];
 
 /** Categorías de reporte, siempre en este orden y con estos nombres. Se derivan de los rubros (lib/rubros.ts). */
 export const CATEGORY_ORDER: BudgetCategory[] = ["materials", "labor", "design", "admin", "transport", "financial", "contingency"];
@@ -191,9 +194,11 @@ export const DEFAULT_SETTINGS: AlertSettings = {
   deadlineNoProductionPct: 50,
 };
 
+/** Usuarios de ejemplo de la demo (el Operario de la demo se elige entre los operarios cargados). */
 export const DEMO_USERS = {
-  management: { name: "Laura Gómez", role: "Gerencia" },
-  workshop: { name: "María Ruiz", role: "Jefa de planta" },
+  admin: { name: "Laura Gómez", role: "Administrativa" },
+  compras: { name: "Martín Ruiz", role: "Compras" },
+  jefe_planta: { name: "María Ruiz", role: "Jefa de planta" },
 } as const;
 
 export const PROJECT_TYPES = [

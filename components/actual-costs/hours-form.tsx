@@ -78,7 +78,7 @@ export function HoursForm({ project, onDone, variant }: { project: Project; onDo
   if (isOperator && !identity.operator) {
     return (
       <p className="rounded-md bg-amber-50 p-4 text-sm text-amber-900" role="alert">
-        Tu usuario todavía no está vinculado a un operario. Pedile a Gestión que cargue tu mail en la sección Operarios.
+        Tu usuario todavía no está vinculado a un operario. Pedile a un usuario Administrativo que te invite desde Configuración → Usuarios.
       </p>
     );
   }
