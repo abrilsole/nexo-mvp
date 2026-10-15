@@ -1,6 +1,6 @@
 # Roles y permisos (Lote 5A)
 
-Blerp pasó de dos experiencias (Gestión y Taller) a **cuatro roles**. Este lote es la base: permisos, usuarios y precios con vigencia. Las pantallas completas de cada rol vienen después (5B planta y operario, 5C compras, 5D dashboard de horas).
+Blerp pasó de dos experiencias (Gestión y Taller) a **cuatro roles**. El Lote 5A es la base: permisos, usuarios y precios con vigencia. Las pantallas de cada rol: `docs/PLANTA_Y_HORAS.md` (5B, Jefe de planta y Operario) y `docs/COMPRAS.md` (5C, Compras).
 
 ## Los cuatro roles
 
@@ -23,17 +23,18 @@ Blerp pasó de dos experiencias (Gestión y Taller) a **cuatro roles**. Este lot
 | Costo por hora de cada operario | Sí | **No** | **No** | **No** |
 | Costo de materiales presupuestado (lista de materiales) | Sí | Sí | **No** | **No** |
 | Precios de compra, compras, stock con costo | Sí | Sí | **No** | **No** |
+| Registrar compras, estado de las líneas, mover stock | Sí | Sí (`compras_save`) | **No** | **No** |
 | Proyectos (código, nombre, cliente, etapa, fechas) | Sí | Sí | Sí | Solo los suyos, en ejecución |
 | Operarios y asignaciones | Sí | **No** | Sí (sin costo) | Solo su nombre |
 | Horas cargadas | Sí (con valor) | **No** | Sí (sin valor) | Solo las suyas (sin valor) |
-| Cargar horas y consumos | Sí | — | — (Próximamente) | Sus propias horas y consumos |
+| Cargar horas y consumos | Sí | — | Asigna (no carga horas) | Sus propias horas y consumos |
 | Usuarios y Configuración | Sí | **No** | **No** | **No** |
 | Corregir valores congelados | Sí | **No** | **No** | **No** |
 
 **Menú de cada rol** (el mismo mapa arma el menú y los guards de ruta; desde el Lote 5B no hay ítems "Próximamente": lo que no está hecho no se muestra):
 
 - **Administrativo:** Dashboard, Proyectos, Alertas, Horas, Cotizador, Historial, Stock, Operarios, Configuración (con la pestaña Usuarios).
-- **Compras:** Materiales por proyecto (el resto llega en el Lote 5C).
+- **Compras:** Dashboard, Proyectos, Alertas, Cotizador, Historial y Stock (ver `docs/COMPRAS.md`).
 - **Jefe de planta:** Resumen, Proyectos, Operarios, Asignaciones, Alertas (ver `docs/PLANTA_Y_HORAS.md`).
 - **Operario:** Mi día (sus asignaciones del día, carga de horas por rubro y "Otras cargas").
 
@@ -52,6 +53,7 @@ Blerp pasó de dos experiencias (Gestión y Taller) a **cuatro roles**. Este lot
     - trae los operarios **sin** `hourly_cost`;
     - trae las horas **sin** `amount` ni `hourlyCost`;
     - trae muebles, bitácora y pedidos.
+- **Compras escribe** solo con `compras_save()` (Lote 5C): compras reales, lotes y movimientos de stock, estados de línea y pedidos del taller. La base calcula el total de cada compra y nunca toca venta, mano de obra ni rentabilidad.
 - **El Operario** sigue con `taller_workspace()` y las funciones `taller_*` (Lote 2).
 - **Llamando a la API directamente** pasa lo mismo: un `select` a una tabla con importes devuelve 0 filas, y las funciones de otro rol dan error.
 - **Baja de una cuenta:** `organization_members.deactivated_at`.
@@ -110,10 +112,20 @@ Blerp pasó de dos experiencias (Gestión y Taller) a **cuatro roles**. Este lot
   - María Ruiz (Jefa de planta);
   - el Operario que elijas entre los operarios cargados.
 - **Solo aparece en una empresa demo** (`organizations.is_demo`) y para un Administrativo. En una empresa real el selector no existe y no cambia nada.
-- En la demo se muestran los datos de ejemplo. No se puede escribir como Compras ni como Jefe de planta (no tienen acciones todavía).
+- En la demo se muestran los datos de ejemplo y se puede trabajar como cada rol (asignar como Jefe de planta, comprar como Compras); lo que se carga queda a nombre del usuario de ejemplo.
+
+## Cotizador de Compras (interpretación, Lote 5C)
+
+El pedido fue "Cotizador de materiales: variante para Compras que solo trabaja con materiales y su costo". Se interpretó así:
+
+- **No es el Cotizador del Administrativo con partes ocultas.** El Cotizador completo calcula mano de obra, precio sugerido y rentabilidad, y Compras no puede ver nada de eso. Por eso Compras **no entra** a `/quotes`.
+- **Es una pantalla propia** (`/compras/cotizador`) que reutiliza las mismas filas de materiales del Cotizador (`components/budget/material-rows.tsx`): descripción con el catálogo, cantidad, unidad, costo unitario y desperdicio.
+- **Resultado:** solo el **costo de materiales** (cantidad con desperdicio × costo unitario). Al lado de cada material muestra el proveedor más barato la última vez (del historial de compras), para comparar.
+- **No guarda** la cotización ni crea proyectos: crear un proyecto sigue siendo del Administrativo. Si el cliente quiere que Compras le pase esta cotización al Administrativo, queda para un lote posterior.
 
 ## Archivos
 
+- `supabase/migrations/20261018120000_lote5c_compras.sql`: estados de línea, `compras_save` y `compras_workspace` con estados (Lote 5C).
 - `supabase/migrations/20261016120000_lote5a_roles_usuarios_vigencia.sql`: roles, funciones de lectura, usuarios, precios con vigencia y valores congelados. Sin DROP ni DELETE.
 - `supabase/manual/20261016120100_lote5a_manual.sql`: **se corre a mano** porque tiene DROP y DELETE. Hace dos cosas:
   - amplía la regla de la columna `role` para aceptar `compras` y `jefe_planta`;

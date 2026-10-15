@@ -11,6 +11,7 @@ import { rubroLabel } from "@/lib/rubros";
 import { useAppStore } from "@/store/use-app-store";
 import { usePlantAlerts, useToday } from "@/store/selectors";
 import { AlertItem } from "@/components/alerts/alert-item";
+import { StatLink } from "@/components/shared/stat";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/badges";
@@ -18,17 +19,6 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-
-function Stat({ icon: Icon, label, value, href, tone }: { icon: typeof UsersRound; label: string; value: string; href: string; tone?: "warn" }) {
-  return (
-    <Link href={href} className="block rounded-lg border border-slate-200 bg-white p-4 hover:border-blue-300">
-      <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-        <Icon className="size-4" aria-hidden /> {label}
-      </div>
-      <div className={cn("mt-1 text-2xl font-semibold tabular", tone === "warn" ? "text-amber-700" : "text-slate-900")}>{value}</div>
-    </Link>
-  );
-}
 
 export function PlantSummaryPage() {
   const today = useToday();
@@ -46,10 +36,10 @@ export function PlantSummaryPage() {
     <div className="space-y-6">
       <PageHeader title="Resumen de planta" subtitle={`Hoy, ${formatDate(today)}. Jornada: ${formatNumber(hoursPerDay)} h.`} />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat icon={CalendarClock} label="Asignaciones de hoy" value={String(todays.length)} href="/planta/asignaciones" />
-        <Stat icon={UsersRound} label="Operarios con horas extra hoy" value={String(loads.filter((l) => l.load.overloaded).length)} href="/planta/asignaciones" tone={loads.some((l) => l.load.overloaded) ? "warn" : undefined} />
-        <Stat icon={ClipboardList} label="Rubros sin asignar" value={String(pending.length)} href="/planta/asignaciones" tone={pending.length ? "warn" : undefined} />
-        <Stat icon={AlertTriangle} label="Alertas de planta" value={String(alerts.length)} href="/planta/alertas" tone={alerts.length ? "warn" : undefined} />
+        <StatLink icon={CalendarClock} label="Asignaciones de hoy" value={String(todays.length)} href="/planta/asignaciones" />
+        <StatLink icon={UsersRound} label="Operarios con horas extra hoy" value={String(loads.filter((l) => l.load.overloaded).length)} href="/planta/asignaciones" tone={loads.some((l) => l.load.overloaded) ? "warn" : undefined} />
+        <StatLink icon={ClipboardList} label="Rubros sin asignar" value={String(pending.length)} href="/planta/asignaciones" tone={pending.length ? "warn" : undefined} />
+        <StatLink icon={AlertTriangle} label="Alertas de planta" value={String(alerts.length)} href="/planta/alertas" tone={alerts.length ? "warn" : undefined} />
       </div>
 
       <Card>

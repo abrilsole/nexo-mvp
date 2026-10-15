@@ -4,7 +4,6 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import type { RubroId } from "@/types";
-import { MATERIAL_CATALOG } from "@/lib/constants";
 import { formatNumber } from "@/lib/formatting";
 import { RUBROS } from "@/lib/rubros";
 import { Button } from "@/components/ui/button";
@@ -12,6 +11,7 @@ import { Select } from "@/components/ui/input";
 import { HelpTip } from "@/components/ui/help-tip";
 import { NumField, Section } from "./fields";
 import { RubroSection } from "./rubro-section";
+import { MaterialCatalogList } from "./material-rows";
 import { ResultSection } from "./result-section";
 import { DelaySection } from "./delay-section";
 import { newRubroRow, ratesText, type CalcState, type CalculatorResult, type RubroRow } from "./calculator-state";
@@ -42,11 +42,7 @@ export function BudgetCalculator({ state, onState, result, projectType, salesPri
 
   return (
     <div className="space-y-4">
-      <datalist id="calc-catalog">
-        {MATERIAL_CATALOG.map((m) => (
-          <option key={m.id} value={m.name} />
-        ))}
-      </datalist>
+      <MaterialCatalogList />
 
       <div className="flex items-center gap-1 text-sm font-semibold text-slate-900">
         Cotización por rubros

@@ -6,6 +6,7 @@
 // y las alertas de planta. Ver docs/PLANTA_Y_HORAS.md.
 // ─────────────────────────────────────────────────────────────
 import type { Alert, AlertSettings, Operator, Project, RubroId, WorkAssignment } from "@/types";
+import { alertBase, alertResolutionKey } from "./alerts";
 import { splitOvertime } from "./capacity";
 import { rubroLabel } from "./rubros";
 import { daysBetween, formatDate, formatNumber } from "./formatting";
@@ -268,12 +269,8 @@ export function rubroHours(project: Project, t: Threshold): RubroHours[] {
 const describe = (r: HoursRecord) => `${formatDate(r.date)} · ${r.worker} · ${formatNumber(r.hours)} h (registro ${r.entryId})`;
 const signedPct = (pct: number | null) => (pct === null ? "" : `, +${formatNumber(pct, 0)} %`);
 
-function projectBase(p: Project) {
-  return { projectId: p.id, projectCode: p.code, projectName: p.name };
-}
-
 /** La alerta se vuelve a evaluar si el proyecto cambia o pasa el día (igual que el resto de las alertas). */
-const withKey = (a: Omit<Alert, "resolutionKey">, p: Project, today: string): Alert => ({ ...a, resolutionKey: `${a.id}~${today}~${p.updatedAt}` });
+const withKey = (a: Omit<Alert, "resolutionKey">, p: Project, today: string): Alert => ({ ...a, resolutionKey: alertResolutionKey(a.id, p, today) });
 
 export interface PlantContext {
   projects: Project[];
@@ -300,7 +297,7 @@ export function plantAlerts(ctx: PlantContext): Alert[] {
     alerts.push(
       withKey(
         {
-          ...projectBase(p),
+          ...alertBase(p),
           id: `${p.id}:hours-day:${d.operatorId}:${d.date}:${d.rubro}`,
           kind: "hours",
           level: "warning",
@@ -320,7 +317,7 @@ export function plantAlerts(ctx: PlantContext): Alert[] {
       alerts.push(
         withKey(
           {
-            ...projectBase(p),
+            ...alertBase(p),
             id: `${p.id}:hours-rubro:${r.rubro}:${Math.round(r.actual)}`,
             kind: "hours",
             level: (r.pct ?? 0) >= 2 * t.pct ? "critical" : "warning",
@@ -346,7 +343,7 @@ export function plantAlerts(ctx: PlantContext): Alert[] {
     alerts.push(
       withKey(
         {
-          ...projectBase(p),
+          ...alertBase(p),
           id: `overload:${operatorId}:${date}`,
           kind: "overload",
           level: "warning",
@@ -367,7 +364,7 @@ export function plantAlerts(ctx: PlantContext): Alert[] {
     alerts.push(
       withKey(
         {
-          ...projectBase(p),
+          ...alertBase(p),
           id: `${p.id}:unassigned:${r.rubro}`,
           kind: "unassigned",
           level: r.daysLeft < 0 ? "critical" : "warning",

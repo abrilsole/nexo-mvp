@@ -24,6 +24,11 @@ export function isManager(role: AppRole): boolean {
   return role === "owner" || role === "member";
 }
 
+/** Compran y mueven stock: Administrativo y Compras (Lote 5C). */
+export function isBuyer(role: AppRole): boolean {
+  return isManager(role) || role === "compras";
+}
+
 export function canExecute(status: ProjectStatus): boolean {
   return EXECUTION_STATUSES.includes(status);
 }

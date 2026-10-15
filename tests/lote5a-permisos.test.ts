@@ -10,8 +10,8 @@ describe("cada rol ve exactamente su menú", () => {
   it("Administrativo: todo, con Horas y Configuración (ahí están Usuarios)", () => {
     expect(menu("admin")).toEqual(["Dashboard", "Proyectos", "Alertas", "Horas", "Cotizador", "Historial", "Stock", "Operarios", "Configuración"]);
   });
-  it("Compras: materiales por proyecto (sin ítems Próximamente)", () => {
-    expect(menu("compras")).toEqual(["Materiales por proyecto"]);
+  it("Compras: Dashboard, Proyectos, Alertas, Cotizador, Historial y Stock (Lote 5C, sin ítems Próximamente)", () => {
+    expect(menu("compras")).toEqual(["Dashboard", "Proyectos", "Alertas", "Cotizador", "Historial", "Stock"]);
   });
   it("Jefe de planta: Resumen, Proyectos, Operarios, Asignaciones y Alertas", () => {
     expect(menu("jefe_planta")).toEqual(["Resumen", "Proyectos", "Operarios", "Asignaciones", "Alertas"]);
@@ -30,7 +30,10 @@ describe("guards de ruta", () => {
     ["admin", "/projects/p-1", true],
     ["admin", "/compras", true],
     ["compras", "/compras", true],
-    ["compras", "/compras/precios", true], // cuelga de su sección
+    ["compras", "/compras/proyectos", true],
+    ["compras", "/compras/stock", true],
+    ["compras", "/stock", false], // su Stock está en /compras/stock
+    ["compras", "/quotes", false], // el Cotizador completo tiene mano de obra y rentabilidad
     ["compras", "/projects", false],
     ["compras", "/settings", false],
     ["compras", "/history", false],

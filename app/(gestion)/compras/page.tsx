@@ -1,5 +1,5 @@
-import { PurchasingPage } from "@/components/roles/purchasing-page";
+import { PurchasingDashboard } from "@/components/purchasing/purchasing-pages";
 
 export default function Page() {
-  return <PurchasingPage />;
+  return <PurchasingDashboard />;
 }

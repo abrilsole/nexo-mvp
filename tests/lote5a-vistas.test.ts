@@ -1,7 +1,7 @@
-// Lote 5A — vistas de Compras y Jefe de planta: solo los datos que cada rol puede ver.
+// Lote 5A — vista del Jefe de planta: solo los datos que puede ver (Compras: tests/lote5c-compras.test.ts).
 import { describe, expect, it } from "vitest";
 import { buildSeed } from "@/lib/seed-data";
-import { plantView, purchasingView } from "@/lib/role-views";
+import { plantView } from "@/lib/role-views";
 
 const seed = buildSeed(new Date("2026-10-13T12:00:00"));
 
@@ -16,22 +16,6 @@ function keysDeep(v: unknown, out = new Set<string>()): Set<string> {
   }
   return out;
 }
-
-describe("Compras: proyectos con su lista de materiales", () => {
-  const view = purchasingView(seed.projects);
-  it("solo proyectos abiertos, solo líneas de materiales, con lo ya comprado", () => {
-    expect(view.map((b) => b.id)).toEqual(seed.projects.filter((p) => !p.isClosed).map((p) => p.id));
-    const main = view.find((b) => b.lines.some((l) => l.purchased > 0));
-    expect(main).toBeDefined();
-    const project = seed.projects.find((p) => p.id === main!.id)!;
-    expect(main!.lines).toHaveLength(project.budgetLines.filter((l) => l.category === "materials").length);
-    expect(main!.materialsCost).toBeCloseTo(project.budgetLines.filter((l) => l.category === "materials").reduce((s, l) => s + l.total, 0), 2);
-  });
-  it("nunca trae precio de venta, rentabilidad ni mano de obra", () => {
-    const keys = keysDeep(view);
-    for (const k of ["salesPrice", "margin", "profit", "baseline", "hourlyCost", "labor"]) expect(keys.has(k), k).toBe(false);
-  });
-});
 
 describe("Jefe de planta: operarios y proyectos sin importes", () => {
   const view = plantView(seed.projects, seed.operators);

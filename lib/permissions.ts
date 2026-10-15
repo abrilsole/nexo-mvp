@@ -32,7 +32,7 @@ export function dbRoleOf(role: RoleKey): Exclude<AppRole, "owner"> {
 }
 
 /** Ícono del ítem de menú (el componente lo traduce a un ícono real; acá no hay React). */
-export type NavIcon = "dashboard" | "projects" | "alerts" | "quotes" | "history" | "stock" | "operators" | "settings" | "materials" | "hours" | "assign" | "day";
+export type NavIcon = "dashboard" | "projects" | "alerts" | "quotes" | "history" | "stock" | "operators" | "settings" | "hours" | "assign" | "day";
 
 export interface NavItem {
   href: string;
@@ -53,7 +53,14 @@ const NAV: Record<RoleKey, NavItem[]> = {
     { href: "/operators", label: "Operarios", icon: "operators" },
     { href: "/settings", label: "Configuración", icon: "settings" },
   ],
-  compras: [{ href: "/compras", label: "Materiales por proyecto", icon: "materials" }],
+  compras: [
+    { href: "/compras", label: "Dashboard", icon: "dashboard" },
+    { href: "/compras/proyectos", label: "Proyectos", icon: "projects" },
+    { href: "/compras/alertas", label: "Alertas", icon: "alerts" },
+    { href: "/compras/cotizador", label: "Cotizador", icon: "quotes" },
+    { href: "/compras/historial", label: "Historial", icon: "history" },
+    { href: "/compras/stock", label: "Stock", icon: "stock" },
+  ],
   jefe_planta: [
     { href: "/planta", label: "Resumen", icon: "dashboard" },
     { href: "/planta/proyectos", label: "Proyectos", icon: "projects" },
@@ -66,6 +73,15 @@ const NAV: Record<RoleKey, NavItem[]> = {
 
 export function navFor(role: RoleKey): NavItem[] {
   return NAV[role];
+}
+
+/**
+ * Link a un proyecto según el rol: Administrativo va a la ficha del proyecto; Compras, a su lista de materiales
+ * (la ficha muestra precio de venta y rentabilidad, que Compras no ve).
+ */
+export function projectHref(role: RoleKey, projectId: string, tab?: string): string {
+  if (role === "compras") return `/compras/proyectos?p=${encodeURIComponent(projectId)}`;
+  return `/projects/${projectId}${tab ? `?tab=${tab}` : ""}`;
 }
 
 /** Pantalla de inicio de cada rol. */
