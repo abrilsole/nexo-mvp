@@ -2,7 +2,8 @@
 // Hooks derivados: combinan estado + funciones puras. Memoizados para no recalcular en cada render.
 import { useCallback, useMemo } from "react";
 import type { Alert, EconomicHealth, Project } from "@/types";
-import { allAlerts, openAlertCount, projectHealth, splitAlerts } from "@/lib/alerts";
+import { allAlerts, openAlertCount, projectHealth, sortAlerts, splitAlerts } from "@/lib/alerts";
+import { plantAlerts } from "@/lib/plant";
 import { projectEconomics, type ProjectEconomics } from "@/lib/calculations";
 import { todayISO } from "@/lib/formatting";
 import { isManager } from "@/lib/project-rules";
@@ -13,17 +14,35 @@ export function useToday(): string {
   return useMemo(() => todayISO(), []);
 }
 
-/** Alertas abiertas y resueltas. Es la única cuenta: globo, pestaña "Todas", alertas del proyecto y salud. */
+/** Alertas de planta (desvío de horas, sobrecarga, rubros sin asignar): sin importes. Jefe de planta y Administrativo. */
+export function usePlantAlerts(): Alert[] {
+  const projects = useAppStore((s) => s.projects);
+  const assignments = useAppStore((s) => s.assignments);
+  const operators = useAppStore((s) => s.operators);
+  const settings = useAppStore((s) => s.settings);
+  const hoursPerDay = useAppStore((s) => s.costSettings.hoursPerDay);
+  const today = useToday();
+  return useMemo(
+    () => sortAlerts(plantAlerts({ projects, assignments, operators, settings, hoursPerDay, today })),
+    [projects, assignments, operators, settings, hoursPerDay, today],
+  );
+}
+
+/**
+ * Alertas del Administrativo, abiertas y resueltas: las económicas y las de planta (Lote 5B).
+ * Es la única cuenta: globo, pestaña "Todas", alertas del proyecto y salud.
+ */
 export function useAlerts(): { open: Alert[]; resolved: Alert[]; count: number } {
   const projects = useAppStore((s) => s.projects);
   const settings = useAppStore((s) => s.settings);
   const resolvedKeys = useAppStore((s) => s.resolvedAlertIds);
   const stock = useAppStore((s) => s.stock);
+  const plant = usePlantAlerts();
   const today = useToday();
   return useMemo(() => {
-    const split = splitAlerts(allAlerts(projects, settings, today, stock), resolvedKeys);
+    const split = splitAlerts(sortAlerts([...allAlerts(projects, settings, today, stock), ...plant]), resolvedKeys);
     return { ...split, count: openAlertCount(split.open) };
-  }, [projects, settings, resolvedKeys, today, stock]);
+  }, [projects, settings, resolvedKeys, today, stock, plant]);
 }
 
 export function useProjectAlerts(project: Project | undefined): Alert[] {

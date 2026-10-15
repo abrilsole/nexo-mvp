@@ -5,7 +5,7 @@
 // alcanza con comparar referencias).
 // ─────────────────────────────────────────────────────────────
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { AlertSettings, AppRole, CostSettings, HourRate, MaterialRequest, Operator, PriceRecord, Project, ValueCorrection } from "@/types";
+import type { AlertSettings, AppRole, CostSettings, HourRate, MaterialRequest, Operator, PriceRecord, Project, ValueCorrection, WorkAssignment } from "@/types";
 import { DEFAULT_FINANCIAL_PCT, DEFAULT_HOUR_RATES, DEFAULT_HOURS_PER_DAY, DEFAULT_OVERTIME_MULTIPLIER, DEFAULT_SETTINGS } from "@/lib/constants";
 import type { StockState } from "@/lib/stock";
 import type { TallerCall } from "./taller";
@@ -33,11 +33,15 @@ import {
   priceRecordFromRow,
   priceRecordToRow,
   correctionFromRow,
+  assignmentFromRow,
+  assignmentToParams,
   type ChildKey,
 } from "./mappers";
 
 export interface WorkspaceData {
   projects: Project[];
+  /** Asignaciones del Jefe de planta (Lote 5B). Las lee Administrativo y Jefe de planta; el Operario, las suyas. */
+  assignments: WorkAssignment[];
   operators: Operator[];
   stock: StockState;
   requests: MaterialRequest[];
@@ -127,6 +131,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     hourRates,
     priceHistory,
     corrections,
+    assignments,
   ] = await Promise.all([
     check(await db.from("projects").select("*").eq("organization_id", org).order("created_at", { ascending: false })) as Record<
       string,
@@ -150,6 +155,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     loadHourRates(db, org),
     loadOptional(db, "price_history", org, priceRecordFromRow),
     loadOptional(db, "value_corrections", org, correctionFromRow),
+    loadAssignments(db, org),
   ]);
 
   const domainProjects = projectsFromRows({ projects, budgetLines, purchaseEntries, materialUsages, actualEntries, activity, items, stageLogs, attachments });
@@ -176,6 +182,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     hourRates: hourRatesAt(hourRates, priceHistory, todayISO()),
     priceHistory,
     corrections,
+    assignments,
     projects: domainProjects,
     operators: operatorsAt(operators.map(operatorFromRow), priceHistory, todayISO()),
     stock,
@@ -192,6 +199,13 @@ export const DEFAULT_COST_SETTINGS: CostSettings = {
   hoursPerDay: DEFAULT_HOURS_PER_DAY,
   laborValuation: "operator",
 };
+
+/** Asignaciones vigentes (las quitadas quedan en la base con removed_at). Sin la tabla todavía: lista vacía. */
+async function loadAssignments(db: SupabaseClient, org: string): Promise<WorkAssignment[]> {
+  const { data, error } = await db.from("work_assignments").select("*").eq("organization_id", org).is("removed_at", null).order("date");
+  if (error || !data) return [];
+  return (data as Record<string, unknown>[]).map(assignmentFromRow);
+}
 
 /** Tabla de Administrativo que puede no existir todavía en la base (migración pendiente): sin ella, lista vacía. */
 async function loadOptional<T>(db: SupabaseClient, table: string, org: string, map: (r: Record<string, unknown>) => T): Promise<T[]> {
@@ -238,7 +252,34 @@ interface TallerWorkspaceJson {
   stock_lots?: Row[];
   stock_movements?: Row[];
   material_requests?: Row[];
+  assignments?: Row[];
+  project_rubros?: Array<{ project_id: string; rubro: string }>;
+  hours_per_day?: number | string;
 }
+
+/**
+ * Rubros de los proyectos del operario: llegan solo como nombre (ni horas estimadas ni costos). En memoria se
+ * guardan como líneas de mano de obra sin cantidad ni importe, para elegir el rubro al cargar horas.
+ */
+function rubroLines(list: Array<{ project_id: string; rubro: string }> | undefined): Row[] {
+  return (list ?? []).map((r, i) => ({
+    id: `rubro-${r.project_id}-${r.rubro}`,
+    project_id: r.project_id,
+    position: i,
+    category: "labor",
+    rubro: r.rubro,
+    description: r.rubro,
+    quantity: null,
+    unit: "h",
+    unit_cost: 0,
+    total: 0,
+  }));
+}
+
+const hoursPerDayOf = (v: number | string | undefined) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 1 && n <= 24 ? n : DEFAULT_HOURS_PER_DAY;
+};
 
 /** Workspace de un operario: solo sus proyectos asignados, sin costos, precios ni márgenes. */
 async function loadTallerWorkspace(db: SupabaseClient, user: { id: string; email?: string }, displayName: string): Promise<Workspace> {
@@ -252,16 +293,18 @@ async function loadTallerWorkspace(db: SupabaseClient, user: { id: string; email
     userName: operator.name || displayName || user.email?.split("@")[0] || "Operario",
     userEmail: user.email ?? "",
     role: "operator",
-    costSettings: { ...DEFAULT_COST_SETTINGS },
+    // De costos, solo la jornada (para avisar si se pasa): nada económico.
+    costSettings: { ...DEFAULT_COST_SETTINGS, hoursPerDay: hoursPerDayOf(json.hours_per_day) },
     hourRates: [],
     priceHistory: [],
     corrections: [],
+    assignments: (json.assignments ?? []).map(assignmentFromRow),
     demoSeeded: true,
     isDemo: false,
     stockMigrated: false,
     projects: projectsFromRows({
       projects: json.projects ?? [],
-      budgetLines: [],
+      budgetLines: rubroLines(json.project_rubros),
       purchaseEntries: [],
       materialUsages: [],
       actualEntries: json.actual_entries ?? [],
@@ -295,6 +338,9 @@ interface StaffWorkspaceJson {
   stock_movements?: Row[];
   material_requests?: Row[];
   price_history?: Row[];
+  assignments?: Row[];
+  hours_per_day?: number | string;
+  alert_settings?: Partial<AlertSettings> | null;
 }
 
 /**
@@ -316,16 +362,18 @@ async function loadStaffWorkspace(db: SupabaseClient, user: { id: string; email?
     userName: json.display_name || user.email?.split("@")[0] || "Usuario",
     userEmail: user.email ?? "",
     role,
-    costSettings: { ...DEFAULT_COST_SETTINGS },
+    costSettings: { ...DEFAULT_COST_SETTINGS, hoursPerDay: hoursPerDayOf(json.hours_per_day) },
     hourRates: [],
     priceHistory: (json.price_history ?? []).map(priceRecordFromRow),
     corrections: [],
+    assignments: (json.assignments ?? []).map(assignmentFromRow),
     demoSeeded: true,
     isDemo: false,
     stockMigrated: false,
     projects: projectsFromRows({
       projects,
-      budgetLines: json.budget_lines ?? [],
+      // Compras: líneas de materiales con su costo · Jefe de planta: mano de obra sin importes (en 0).
+      budgetLines: withZeros(json.budget_lines, { unit_cost: 0, total: 0 }),
       purchaseEntries: json.purchase_entries ?? [],
       materialUsages: json.material_usages ?? [],
       actualEntries,
@@ -337,7 +385,7 @@ async function loadStaffWorkspace(db: SupabaseClient, user: { id: string; email?
     operators: withZeros(json.operators, { hourly_cost: 0 }).map(operatorFromRow),
     stock: { lots: (json.stock_lots ?? []).map(lotFromRow), movements: (json.stock_movements ?? []).map(movementFromRow) },
     requests: (json.material_requests ?? []).map(requestFromRow),
-    settings: { ...DEFAULT_SETTINGS },
+    settings: { ...DEFAULT_SETTINGS, ...(json.alert_settings ?? {}) },
     resolvedAlertIds: [],
   };
 }
@@ -439,6 +487,16 @@ export async function saveHourRates(db: SupabaseClient, org: string, rates: Hour
   check(await db.from("hour_rates").upsert(rates.map((r, i) => hourRateToRow(org, r, i)), { onConflict: "organization_id,id" }));
 }
 
+/** Crea o modifica una asignación (Administrativo o Jefe de planta; la base valida). */
+export async function saveAssignment(db: SupabaseClient, a: WorkAssignment) {
+  check(await db.rpc("planta_save_assignment", { p: assignmentToParams(a) }));
+}
+
+/** Quita una asignación (queda marcada en la base, no se borra). */
+export async function removeAssignment(db: SupabaseClient, id: string) {
+  check(await db.rpc("planta_remove_assignment", { p_id: id }));
+}
+
 /** El historial de precios solo crece: se insertan los registros nuevos. */
 export async function addPriceRecords(db: SupabaseClient, org: string, records: PriceRecord[]) {
   if (records.length) check(await db.from("price_history").insert(records.map((r) => priceRecordToRow(org, r))));
@@ -504,6 +562,8 @@ export function workspacePayload(org: string, data: WorkspaceData | null): Recor
  */
 export async function replaceWorkspace(db: SupabaseClient, org: string, data: WorkspaceData | null) {
   check(await db.rpc("reset_workspace", { p_data: workspacePayload(org, data) }));
+  // Las asignaciones de la demo se cargan con la misma función que usa el Jefe de planta.
+  for (const a of data?.assignments ?? []) await saveAssignment(db, a);
   // Con la demo cargada la empresa queda como demo; al vaciar, deja de serlo.
   check(await db.from("organizations").update({ is_demo: data !== null }).eq("id", org));
 }

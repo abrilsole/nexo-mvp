@@ -80,7 +80,7 @@ export function RecordDialog({ project, open, onOpenChange }: { project: Project
         ) : kind === "material" ? (
           <UsageForm project={project} onDone={close} variant="management" />
         ) : kind === "labor" ? (
-          <HoursForm project={project} onDone={close} variant="management" />
+          <HoursForm project={project} onDone={close} />
         ) : (
           <OtherCostForm project={project} cost={isOtherCostKind(kind) ? { type: "other", category: kind } : { type: kind }} onDone={close} />
         )}

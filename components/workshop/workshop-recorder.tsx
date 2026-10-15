@@ -1,18 +1,18 @@
 "use client";
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowLeft, CheckCircle2, Clock, NotebookPen, Package, PackagePlus } from "lucide-react";
+import { ArrowLeft, CheckCircle2, NotebookPen, Package, PackagePlus } from "lucide-react";
 import { APP_NAME } from "@/lib/constants";
 import { projectsForOperator } from "@/lib/operators";
 import { useAppStore, useProject } from "@/store/use-app-store";
 import { useIdentity } from "@/store/selectors";
 import { Button } from "@/components/ui/button";
 import { UsageForm } from "@/components/materials/usage-form";
-import { HoursForm } from "@/components/actual-costs/hours-form";
 import { MaterialRequestForm } from "./material-request-form";
 import { StageNoteForm } from "./stage-note-form";
 
-type View = "menu" | "material" | "hours" | "request" | "note" | "done";
+// Las horas se cargan en "Mi día" (Lote 5B): acá quedan las otras cargas.
+type View = "menu" | "material" | "request" | "note" | "done";
 
 /** Registro de Taller: sin plata, sólo lo que el operario asignado puede hacer en un proyecto en ejecución. */
 export function WorkshopRecorder({ projectId }: { projectId: string }) {
@@ -30,7 +30,7 @@ export function WorkshopRecorder({ projectId }: { projectId: string }) {
       <Shell>
         <p className="py-10 text-center text-slate-600">
           {!operator
-            ? "Elegí un operario en “Mi día” para continuar."
+            ? "Entrá desde “Mi día” para continuar."
             : "No tenés acceso a este proyecto: no está activo en ejecución o no estás asignado."}
         </p>
       </Shell>
@@ -55,7 +55,6 @@ export function WorkshopRecorder({ projectId }: { projectId: string }) {
           <h1 className="mb-4 text-2xl font-semibold">¿Qué querés registrar?</h1>
           <div className="grid gap-3">
             <BigOption icon={Package} label="Material usado" hint="Lo que usaste, desperdicio y sobrante" onClick={() => setView("material")} />
-            <BigOption icon={Clock} label="Horas" hint="Tus horas en este proyecto" onClick={() => setView("hours")} />
             <BigOption icon={PackagePlus} label="Solicitar material" hint="Avisá qué te falta" onClick={() => setView("request")} />
             <BigOption icon={NotebookPen} label="Nota o incidencia" hint="Con foto si hace falta" onClick={() => setView("note")} />
           </div>
@@ -75,7 +74,6 @@ export function WorkshopRecorder({ projectId }: { projectId: string }) {
             <ArrowLeft className="size-4" /> Volver
           </button>
           {view === "material" && <UsageForm project={project} variant="workshop" onDone={done} onRequestMaterial={() => setView("request")} />}
-          {view === "hours" && <HoursForm project={project} variant="workshop" onDone={done} />}
           {view === "request" && <MaterialRequestForm project={project} onDone={done} />}
           {view === "note" && <StageNoteForm project={project} onDone={done} />}
         </div>
@@ -90,8 +88,8 @@ function Shell({ children }: { children: React.ReactNode }) {
       <div className="mx-auto max-w-md px-4 pb-16">
         <header className="flex items-center justify-between py-4">
           <span className="text-lg font-semibold tracking-tight">{APP_NAME}</span>
-          <Link href="/dashboard" className="text-sm text-blue-700">
-            Mis proyectos
+          <Link href="/taller" className="text-sm text-blue-700">
+            Mi día
           </Link>
         </header>
         {children}

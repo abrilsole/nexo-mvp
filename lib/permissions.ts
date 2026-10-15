@@ -32,40 +32,34 @@ export function dbRoleOf(role: RoleKey): Exclude<AppRole, "owner"> {
 }
 
 /** Ícono del ítem de menú (el componente lo traduce a un ícono real; acá no hay React). */
-export type NavIcon = "dashboard" | "projects" | "alerts" | "quotes" | "history" | "stock" | "operators" | "settings" | "materials" | "suppliers" | "prices" | "plant" | "hours" | "capacity" | "assign" | "day";
+export type NavIcon = "dashboard" | "projects" | "alerts" | "quotes" | "history" | "stock" | "operators" | "settings" | "materials" | "hours" | "assign" | "day";
 
 export interface NavItem {
   href: string;
   label: string;
   icon: NavIcon;
-  /** Próximamente: se muestra marcado y sin link (no hay función falsa detrás). */
-  soon?: boolean;
 }
 
+/** Solo lo que está hecho: no hay ítems "Próximamente" (Lote 5B). */
 const NAV: Record<RoleKey, NavItem[]> = {
   admin: [
     { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
     { href: "/projects", label: "Proyectos", icon: "projects" },
     { href: "/alerts", label: "Alertas", icon: "alerts" },
+    { href: "/horas", label: "Horas", icon: "hours" },
     { href: "/quotes", label: "Cotizador", icon: "quotes" },
     { href: "/history", label: "Historial", icon: "history" },
     { href: "/stock", label: "Stock", icon: "stock" },
     { href: "/operators", label: "Operarios", icon: "operators" },
     { href: "/settings", label: "Configuración", icon: "settings" },
   ],
-  compras: [
-    { href: "/compras", label: "Materiales por proyecto", icon: "materials" },
-    { href: "/compras/stock", label: "Stock", icon: "stock", soon: true },
-    { href: "/compras/proveedores", label: "Proveedores", icon: "suppliers", soon: true },
-    { href: "/compras/precios", label: "Precios de compra", icon: "prices", soon: true },
-    { href: "/compras/cotizador", label: "Cotizador", icon: "quotes", soon: true },
-    { href: "/compras/historial", label: "Historial", icon: "history", soon: true },
-  ],
+  compras: [{ href: "/compras", label: "Materiales por proyecto", icon: "materials" }],
   jefe_planta: [
-    { href: "/planta", label: "Operarios y proyectos", icon: "plant" },
-    { href: "/planta/horas", label: "Horas", icon: "hours", soon: true },
-    { href: "/planta/capacidad", label: "Capacidad", icon: "capacity", soon: true },
-    { href: "/planta/asignaciones", label: "Asignaciones", icon: "assign", soon: true },
+    { href: "/planta", label: "Resumen", icon: "dashboard" },
+    { href: "/planta/proyectos", label: "Proyectos", icon: "projects" },
+    { href: "/planta/operarios", label: "Operarios", icon: "operators" },
+    { href: "/planta/asignaciones", label: "Asignaciones", icon: "assign" },
+    { href: "/planta/alertas", label: "Alertas", icon: "alerts" },
   ],
   operario: [{ href: "/taller", label: "Mi día", icon: "day" }],
 };
@@ -82,15 +76,13 @@ export function homeFor(role: RoleKey): string {
 const under = (pathname: string, href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
 /**
- * ¿Puede entrar a esta ruta? Administrativo entra a todo. El resto, solo a sus secciones listas
- * (no a las "Próximamente"). El Operario además entra al detalle de sus proyectos en /taller/…
+ * ¿Puede entrar a esta ruta? Administrativo entra a todo. El resto, solo a sus secciones (y lo que cuelga de
+ * ellas: el detalle de un proyecto del Operario en /taller/…). "/planta" no habilita "/planta/x" por sí sola:
+ * cada sección del Jefe de planta está en el menú.
  */
 export function canAccess(role: RoleKey, pathname: string): boolean {
   if (role === "admin") return true;
-  const ready = NAV[role].filter((i) => !i.soon);
-  const soon = NAV[role].filter((i) => i.soon);
-  if (soon.some((i) => under(pathname, i.href))) return false;
-  return ready.some((i) => under(pathname, i.href));
+  return NAV[role].some((i) => under(pathname, i.href));
 }
 
 /** Datos económicos: qué rol puede ver cada uno (es la misma matriz que aplica la base). */

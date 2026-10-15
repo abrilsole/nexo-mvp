@@ -71,8 +71,9 @@ export function tallerCalls(prev: TallerState, next: TallerState, org: string): 
           stage: e.stage ?? null,
           item_id: e.itemId ?? null,
           notes: e.notes ?? null,
-          // El navegador ya pidió confirmación por encima de 16 h; el tope de 24 h lo controla el servidor.
-          confirm_high: true,
+          // Lote 5B: las horas se cargan por rubro y pueden confirmar una asignación. El tope de 24 h lo controla el servidor.
+          rubro: e.rubro ?? null,
+          assignment_id: e.assignmentId ?? null,
         },
       });
     }

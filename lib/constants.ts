@@ -192,6 +192,9 @@ export const DEFAULT_SETTINGS: AlertSettings = {
   daysWithoutRecords: 7,
   dueSoonDays: 5,
   deadlineNoProductionPct: 50,
+  // Supuesto a ajustar con el cliente (Lote 5B): 25 % o 2 h por encima de lo previsto, lo que ocurra primero.
+  hoursDeviationPct: 25,
+  hoursDeviationHours: 2,
 };
 
 /** Usuarios de ejemplo de la demo (el Operario de la demo se elige entre los operarios cargados). */

@@ -8,9 +8,7 @@ import {
   CalendarDays,
   ClipboardList,
   Clock,
-  Factory,
   FolderKanban,
-  Gauge,
   HardHat,
   History,
   LayoutDashboard,
@@ -18,9 +16,7 @@ import {
   Menu,
   Plus,
   Settings,
-  Tags,
   TriangleAlert,
-  Truck,
   UsersRound,
   X,
   type LucideIcon,
@@ -48,11 +44,7 @@ const ICONS: Record<NavIcon, LucideIcon> = {
   operators: HardHat,
   settings: Settings,
   materials: ClipboardList,
-  suppliers: Truck,
-  prices: Tags,
-  plant: Factory,
   hours: Clock,
-  capacity: Gauge,
   assign: UsersRound,
   day: CalendarDays,
 };
@@ -80,18 +72,9 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <div className="text-lg font-semibold tracking-tight text-slate-900">{APP_NAME}</div>
         <div className="text-xs text-slate-500">{APP_SUBTITLE}</div>
       </Link>
-      <nav aria-label="Principal" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3">
+      <nav aria-label="Principal" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden px-3">
         {navFor(roleKey).map((item) => {
           const Icon = ICONS[item.icon];
-          if (item.soon) {
-            return (
-              <div key={item.href} aria-disabled="true" className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-slate-400">
-                <Icon className="size-4" aria-hidden />
-                {item.label}
-                <span className="ml-auto rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Próximamente</span>
-              </div>
-            );
-          }
           const active = isActive(pathname, item.href);
           return (
             <Link
@@ -100,21 +83,21 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               onClick={onNavigate}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium",
+                "flex min-w-0 items-center gap-3 rounded-md px-3 py-2 text-sm font-medium",
                 active ? "bg-blue-50 text-blue-800" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
               )}
             >
-              <Icon className="size-4" aria-hidden />
-              {item.label}
+              <Icon className="size-4 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 break-words">{item.label}</span>
               {item.href === "/alerts" && count > 0 && (
-                <span className="ml-auto rounded-full bg-red-100 px-1.5 text-xs font-semibold text-red-700 tabular">{count}</span>
+                <span className="shrink-0 rounded-full bg-red-100 px-1.5 text-xs font-semibold text-red-700 tabular">{count}</span>
               )}
             </Link>
           );
         })}
       </nav>
       <div className="shrink-0 space-y-3 border-t border-slate-200 p-4">
-        <ModeSwitch />
+        <ModeSwitch onSwitch={onNavigate} />
         <div className="flex items-center gap-3">
           <div className="flex size-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700" aria-hidden>
             {actor.split(" ").filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("")}

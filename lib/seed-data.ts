@@ -5,6 +5,7 @@
 // Ningún nombre corresponde a empresas o clientes reales.
 // ─────────────────────────────────────────────────────────────
 import type {
+  WorkAssignment,
   ActivityEvent,
   ActualEntry,
   ActualEntryType,
@@ -295,6 +296,8 @@ class SeedBuilder {
         amount: hours * rate,
         labor: { role, workerName: worker, hours, hourlyCost: rate },
         operatorId: operatorIdFor(worker),
+        // La demo cotiza la mano de obra en Carpintería madera: las horas se cargan en ese rubro.
+        rubro: "carpinteria_madera",
         createdBy: worker,
         createdAt: this.at(off, 18),
       };
@@ -349,6 +352,8 @@ class SeedBuilder {
 export interface SeedState {
   projects: Project[];
   operators: Operator[];
+  /** Asignaciones del Jefe de planta para esta semana (Lote 5B). */
+  assignments: WorkAssignment[];
   /** Stock inicial: se deriva de las compras, usos y sobrantes de la demo. */
   stock: StockState;
   /** Pool del modelo anterior (sólo para derivar el stock). */
@@ -356,6 +361,60 @@ export interface SeedState {
 }
 
 export const MAIN_DEMO_PROJECT_ID = "p-1042";
+
+/**
+ * Circuito completo de planta en la demo (Lote 5B): asignaciones de esta semana y horas cargadas sobre ellas.
+ * Ayer Juan tenía 4 h previstas en P-1042 y cargó 9 h (desvío → alerta); hoy Diego tiene 12 h asignadas con una
+ * jornada de 9,5 h (sobrecarga → horas extra).
+ */
+// [día, operario, proyecto, horas previstas, horas cargadas (undefined = todavía no cargó)]
+const ASSIGNMENT_SPECS: Array<[number, string, string, number, number | undefined]> = [
+  [-2, "op-juan", "p-1045", 8, 8],
+  [-1, "op-juan", MAIN_DEMO_PROJECT_ID, 4, 9],
+  [-1, "op-diego", "p-1045", 8, 7.5],
+  [0, "op-juan", MAIN_DEMO_PROJECT_ID, 3, undefined],
+  [0, "op-juan", "p-1045", 6, undefined],
+  [0, "op-diego", "p-1048", 8, undefined],
+  [0, "op-diego", MAIN_DEMO_PROJECT_ID, 4, undefined],
+  [1, "op-juan", MAIN_DEMO_PROJECT_ID, 8, undefined],
+  [1, "op-diego", "p-1048", 8, undefined],
+  [2, "op-juan", "p-1045", 8, undefined],
+];
+
+function seedAssignments(b: SeedBuilder, projects: Project[]): WorkAssignment[] {
+  return ASSIGNMENT_SPECS.map(([off, operatorId, projectId, planned, logged], i) => {
+    const a: WorkAssignment = {
+      id: `asg-demo-${String(i + 1).padStart(2, "0")}`,
+      projectId,
+      rubro: "carpinteria_madera",
+      operatorId,
+      date: b.day(off),
+      plannedHours: planned,
+      createdBy: PLANTA,
+      createdAt: b.at(off - 3, 9),
+    };
+    const project = projects.find((p) => p.id === projectId);
+    const op = OPERATOR_SPECS.find((o) => o.id === operatorId);
+    if (project && op && logged !== undefined) {
+      project.actualEntries.push({
+        id: b.id("act"),
+        projectId,
+        date: a.date,
+        type: "labor",
+        category: "labor",
+        description: `Carpintería madera — ${op.name}`,
+        amount: logged * op.hourlyCost,
+        labor: { role: "Carpintería madera", workerName: op.name, hours: logged, hourlyCost: op.hourlyCost },
+        operatorId,
+        rubro: "carpinteria_madera",
+        assignmentId: a.id,
+        createdBy: op.name,
+        createdAt: b.at(off, 18),
+      });
+    }
+    return a;
+  });
+}
 
 export function buildSeed(now: Date = new Date()): SeedState {
   const b = new SeedBuilder(now);
@@ -886,5 +945,6 @@ export function buildSeed(now: Date = new Date()): SeedState {
   }
 
   const operators: Operator[] = OPERATOR_SPECS.map((o) => ({ ...o, active: true, createdAt: b.at(-200, 9) }));
-  return { projects, operators, stock: deriveLedgerFromLegacy(projects, b.pool), legacyPool: b.pool };
+  const assignments = seedAssignments(b, projects);
+  return { projects, operators, assignments, stock: deriveLedgerFromLegacy(projects, b.pool), legacyPool: b.pool };
 }

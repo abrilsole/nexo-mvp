@@ -87,6 +87,8 @@ export interface BudgetLine {
   hoursPerDay?: number;
   /** Multiplicador usado en las horas extra (trazabilidad del importe). */
   overtimeMultiplier?: number;
+  /** Mano de obra: cuántos operarios pidió el Cotizador para el rubro (Lote 5B). */
+  workers?: number;
 }
 
 /**
@@ -218,6 +220,27 @@ export interface ActualEntry {
   stage?: ProjectStatus;
   /** Mueble del proyecto al que se imputa (vacío = general del proyecto). */
   itemId?: string;
+  /** Horas: rubro del proyecto en el que se trabajó (Lote 5B). */
+  rubro?: RubroId;
+  /** Horas: asignación del jefe de planta que se confirmó o corrigió. */
+  assignmentId?: string;
+  notes?: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+/**
+ * Asignación del Jefe de planta (Lote 5B): qué operario trabaja en qué proyecto y rubro un día, y cuántas horas
+ * se prevén. Sin importes.
+ */
+export interface WorkAssignment {
+  id: string;
+  projectId: string;
+  rubro: RubroId;
+  operatorId: string;
+  /** yyyy-mm-dd */
+  date: string;
+  plannedHours: number;
   notes?: string;
   createdBy: string;
   createdAt: string;
@@ -458,9 +481,13 @@ export interface AlertSettings {
   dueSoonDays: number;
   /** Alerta si pasó este % del plazo y el proyecto todavía no llegó a Producción. */
   deadlineNoProductionPct: number;
+  /** Desvío de horas (Lote 5B, supuesto a ajustar): alerta si las horas reales superan las previstas en este %… */
+  hoursDeviationPct: number;
+  /** …o en estas horas, lo que ocurra primero. */
+  hoursDeviationHours: number;
 }
 
-export type AlertKind = "category" | "margin" | "stale" | "due" | "reconciliation" | "staffing";
+export type AlertKind = "category" | "margin" | "stale" | "due" | "reconciliation" | "staffing" | "hours" | "overload" | "unassigned";
 
 export interface Alert {
   /** Determinístico: permite marcarla como resuelta. Incluye el nivel para que un agravamiento reaparezca. */
@@ -475,6 +502,8 @@ export interface Alert {
   impactAmount?: number;
   expectedMargin?: number;
   projectedMargin?: number;
+  /** De dónde sale (registros de horas, asignaciones): la alerta se puede rastrear hasta ellos. */
+  records?: string[];
   /**
    * Clave con la que se marca como resuelta: alerta + día + última modificación del proyecto.
    * Si el problema persiste (al día siguiente o después de un nuevo registro), la alerta reaparece.

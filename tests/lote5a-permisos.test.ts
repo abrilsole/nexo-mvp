@@ -4,24 +4,17 @@ import type { AppRole } from "@/types";
 import { can, canAccess, canSee, dbRoleOf, homeFor, navFor, ROLE_KEYS, ROLE_LABELS, roleKeyOf, type DataField, type RoleKey } from "@/lib/permissions";
 import { effectiveIdentity } from "@/store/use-app-store";
 
-const menu = (r: RoleKey) => navFor(r).map((i) => (i.soon ? `${i.label} (Próximamente)` : i.label));
+const menu = (r: RoleKey) => navFor(r).map((i) => i.label);
 
 describe("cada rol ve exactamente su menú", () => {
-  it("Administrativo: todo, con Configuración (ahí están Usuarios)", () => {
-    expect(menu("admin")).toEqual(["Dashboard", "Proyectos", "Alertas", "Cotizador", "Historial", "Stock", "Operarios", "Configuración"]);
+  it("Administrativo: todo, con Horas y Configuración (ahí están Usuarios)", () => {
+    expect(menu("admin")).toEqual(["Dashboard", "Proyectos", "Alertas", "Horas", "Cotizador", "Historial", "Stock", "Operarios", "Configuración"]);
   });
-  it("Compras: materiales por proyecto; lo demás marcado como Próximamente", () => {
-    expect(menu("compras")).toEqual([
-      "Materiales por proyecto",
-      "Stock (Próximamente)",
-      "Proveedores (Próximamente)",
-      "Precios de compra (Próximamente)",
-      "Cotizador (Próximamente)",
-      "Historial (Próximamente)",
-    ]);
+  it("Compras: materiales por proyecto (sin ítems Próximamente)", () => {
+    expect(menu("compras")).toEqual(["Materiales por proyecto"]);
   });
-  it("Jefe de planta: operarios y proyectos; horas, capacidad y asignaciones Próximamente", () => {
-    expect(menu("jefe_planta")).toEqual(["Operarios y proyectos", "Horas (Próximamente)", "Capacidad (Próximamente)", "Asignaciones (Próximamente)"]);
+  it("Jefe de planta: Resumen, Proyectos, Operarios, Asignaciones y Alertas", () => {
+    expect(menu("jefe_planta")).toEqual(["Resumen", "Proyectos", "Operarios", "Asignaciones", "Alertas"]);
   });
   it("Operario: su día", () => {
     expect(menu("operario")).toEqual(["Mi día"]);
@@ -37,7 +30,7 @@ describe("guards de ruta", () => {
     ["admin", "/projects/p-1", true],
     ["admin", "/compras", true],
     ["compras", "/compras", true],
-    ["compras", "/compras/precios", false], // Próximamente
+    ["compras", "/compras/precios", true], // cuelga de su sección
     ["compras", "/projects", false],
     ["compras", "/settings", false],
     ["compras", "/history", false],
@@ -45,7 +38,8 @@ describe("guards de ruta", () => {
     ["jefe_planta", "/planta", true],
     ["jefe_planta", "/operators", false],
     ["jefe_planta", "/dashboard", false],
-    ["jefe_planta", "/planta/horas", false],
+    ["jefe_planta", "/planta/asignaciones", true],
+    ["jefe_planta", "/horas", false],
     ["operario", "/taller/p-1", true],
     ["operario", "/projects", false],
     ["operario", "/settings", false],
