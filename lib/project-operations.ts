@@ -69,7 +69,7 @@ export interface Ctx {
 const roleOf = (ctx: Ctx): AppRole => ctx.role ?? "owner";
 
 function assertManager(ctx: Ctx, what: string) {
-  if (!isManager(roleOf(ctx))) throw new RuleError(`${what} lo hace Gestión.`);
+  if (!isManager(roleOf(ctx))) throw new RuleError(`${what} lo hace un usuario Administrativo.`);
 }
 
 /** Un operario sólo trabaja en proyectos que tiene asignados. */
@@ -159,7 +159,7 @@ export function createProject(input: NewProjectInput, ctx: Ctx): Project {
 
 export function assertBudgetEditable(project: Project) {
   if (!BUDGET_EDITABLE_STATUSES.includes(project.status)) {
-    throw new DomainError("El presupuesto base está bloqueado: el proyecto ya está en ejecución.");
+    throw new DomainError("El costo presupuestado quedó congelado al aprobar el proyecto: corregilo con un registro (Corregir).");
   }
 }
 
@@ -491,6 +491,8 @@ export function logHours(
   input: HoursInput,
   settings: AlertSettings,
   ctx: Ctx,
+  /** Costo de una hora ese día (precios con vigencia, Lote 5A). Sin él, el costo por hora cargado del operario. */
+  costAt: (op: Operator, date: string) => number = (op) => op.hourlyCost,
 ): Project {
   assertExecutable(project, "horas de trabajo");
   assertCanWork(project, ctx);
@@ -512,6 +514,7 @@ export function logHours(
   if (check.level === "block") throw new RuleError(check.message ?? "Horas inválidas.");
   if (check.level === "warn" && !input.confirmHighHours) throw new RuleError(`${check.message} Confirmá para guardarlas.`);
 
+  const hourlyCost = costAt(op, input.date);
   const entry: ActualEntry = {
     id: createId("act"),
     projectId: project.id,
@@ -519,8 +522,8 @@ export function logHours(
     type: "labor",
     category: "labor",
     description: `${input.workType} — ${op.name}`,
-    amount: Math.round(input.hours * op.hourlyCost * 100) / 100,
-    labor: { role: input.workType, workerName: op.name, hours: input.hours, hourlyCost: op.hourlyCost },
+    amount: Math.round(input.hours * hourlyCost * 100) / 100,
+    labor: { role: input.workType, workerName: op.name, hours: input.hours, hourlyCost },
     operatorId: op.id,
     stage: input.stage ?? (project.status as StageKey),
     itemId: input.itemId,

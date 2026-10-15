@@ -106,14 +106,14 @@ export function StockPage({ material, lot, tab }: { material?: string; lot?: str
         <Card><CardContent className="p-4"><div className="text-xs text-slate-500">Valor total en stock</div><div className="text-lg font-semibold tabular">{formatCurrency(total)}</div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="text-xs text-slate-500">Materiales</div><div className="text-lg font-semibold tabular">{rows.length}</div></CardContent></Card>
         <Card><CardContent className="p-4"><div className="text-xs text-slate-500">Sobrantes reutilizables</div><div className="text-lg font-semibold tabular">{leftovers.length}</div></CardContent></Card>
-        <Card><CardContent className="p-4"><div className="text-xs text-slate-500">Pedidos de Taller abiertos</div><div className="text-lg font-semibold tabular">{openRequests.length}</div></CardContent></Card>
+        <Card><CardContent className="p-4"><div className="text-xs text-slate-500">Pedidos de operarios abiertos</div><div className="text-lg font-semibold tabular">{openRequests.length}</div></CardContent></Card>
       </div>
 
       <Tabs defaultValue={defaultTab}>
         <TabsList>
           <TabsTrigger value="materiales">Materiales</TabsTrigger>
           <TabsTrigger value="sobrantes">Sobrantes ({leftovers.length})</TabsTrigger>
-          <TabsTrigger value="pedidos">Pedidos de taller ({openRequests.length})</TabsTrigger>
+          <TabsTrigger value="pedidos">Pedidos de operarios ({openRequests.length})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="materiales">
@@ -285,7 +285,7 @@ export function StockPage({ material, lot, tab }: { material?: string; lot?: str
 
         <TabsContent value="pedidos">
           {requests.length === 0 ? (
-            <EmptyState icon={Boxes} title="Sin pedidos de Taller" description="Cuando un operario solicite material, aparece acá." />
+            <EmptyState icon={Boxes} title="Sin pedidos de operarios" description="Cuando un operario solicite material, aparece acá." />
           ) : (
             <Card>
               <Table>

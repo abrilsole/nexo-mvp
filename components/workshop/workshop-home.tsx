@@ -9,13 +9,14 @@ import { StatusBadge } from "@/components/shared/badges";
 import { ModeSwitch } from "@/components/layout/mode-switch";
 import { Select } from "@/components/ui/input";
 
-/** Inicio de Taller: sólo los proyectos activos, en etapa de ejecución, asignados al operario. Sin plata. */
+/** Inicio del Operario ("Mi día"): sólo los proyectos activos, en etapa de ejecución, asignados al operario. Sin plata. */
 export function WorkshopHome() {
   const projects = useAppStore((s) => s.projects);
   const operators = useAppStore((s) => s.operators);
   const setActingOperator = useAppStore((s) => s.setActingOperator);
   const userId = useAppStore((s) => s.userId);
   const userEmail = useAppStore((s) => s.userEmail);
+  const isDemo = useAppStore((s) => s.isDemo);
   const { operator, realRole } = useIdentity();
   const isRealOperator = realRole === "operator";
   const mine = operator ? projectsForOperator(projects, operator.id, operators) : [];
@@ -26,7 +27,7 @@ export function WorkshopHome() {
       <header className="flex items-center justify-between py-4">
         <div>
           <div className="text-lg font-semibold tracking-tight">{APP_NAME}</div>
-          <div className="text-xs text-slate-500">Taller{operator ? ` · ${operator.name}` : ""}</div>
+          <div className="text-xs text-slate-500">Operario{operator ? ` · ${operator.name}` : ""}</div>
         </div>
         {isRealOperator && (
           <form action="/auth/signout" method="post">
@@ -35,9 +36,9 @@ export function WorkshopHome() {
         )}
       </header>
 
-      {!isRealOperator && (
+      {!isRealOperator && isDemo && (
         <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <label htmlFor="acting-op" className="mb-1.5 block text-xs font-medium text-slate-600">Ver Taller como operario</label>
+          <label htmlFor="acting-op" className="mb-1.5 block text-xs font-medium text-slate-600">Ver la demo como el operario</label>
           <Select id="acting-op" value={operator?.id ?? ""} onChange={(e) => setActingOperator(e.target.value || null)}>
             <option value="">Elegí un operario…</option>
             {activeOperators(operators).map((o) => (
@@ -50,10 +51,12 @@ export function WorkshopHome() {
       {!operator ? (
         <p className="rounded-md bg-amber-50 p-4 text-sm text-amber-900">
           {access === "deactivated"
-            ? "Tu usuario está dado de baja como operario, así que no ves proyectos. Si es un error, pedile a Gestión que te reactive."
+            ? "Tu usuario está dado de baja como operario, así que no ves proyectos. Si es un error, pedile a un usuario Administrativo que te reactive."
             : isRealOperator
-            ? "Tu usuario todavía no está vinculado a un operario. Pedile a Gestión que cargue tu email en la sección Operarios."
-            : "Elegí un operario para ver lo que vería en Taller."}
+            ? "Tu usuario todavía no está vinculado a un operario. Pedile a un usuario Administrativo que te invite desde Configuración → Usuarios."
+            : isDemo
+            ? "Elegí un operario para ver lo que vería en su día."
+            : "Esta pantalla es la de los operarios."}
         </p>
       ) : (
         <>
@@ -79,7 +82,7 @@ export function WorkshopHome() {
         </>
       )}
 
-      {!isRealOperator && (
+      {!isRealOperator && isDemo && (
         <div className="mt-8 border-t border-slate-200 pt-4">
           <ModeSwitch />
         </div>

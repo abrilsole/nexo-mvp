@@ -35,7 +35,7 @@ export function TeamCard({ project }: { project: Project }) {
       <CardHeader className="flex-row items-start justify-between gap-2">
         <div>
           <CardTitle>Equipo asignado</CardTitle>
-          <CardDescription>Sólo estos operarios ven el proyecto en Taller y pueden cargar horas.</CardDescription>
+          <CardDescription>Sólo estos operarios ven el proyecto en su día y pueden cargar horas.</CardDescription>
         </div>
         {isManager && !project.isClosed && (
           <Button size="sm" variant="outline" onClick={() => { setSel(project.assignedOperatorIds); setError(""); setOpen(true); }}>

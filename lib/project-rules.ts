@@ -68,7 +68,7 @@ export function assertTransition(
 ): TransitionKind {
   if (project.isClosed) throw new RuleError("El proyecto está cerrado.");
   if (to === "completed") throw new RuleError("Para finalizar usá “Cerrar proyecto”.");
-  if (!isManager(opts.role)) throw new RuleError("Solo Gestión puede cambiar la etapa del proyecto.");
+  if (!isManager(opts.role)) throw new RuleError("Solo un usuario Administrativo puede cambiar la etapa del proyecto.");
   const kind = transitionKind(project.status, to);
   if (!kind) {
     const next = nextStatus(project.status);

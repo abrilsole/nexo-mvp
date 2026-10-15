@@ -11,17 +11,20 @@ import type {
   BudgetLine,
   CostSettings,
   HourRate,
+  LaborValuation,
   MaterialRequest,
   MaterialUsageEntry,
   Operator,
   Place,
   Project,
   ProjectItem,
+  PriceRecord,
   PurchaseEntry,
   ReusableMaterial,
   StageLog,
   StockLot,
   StockMovement,
+  ValueCorrection,
 } from "@/types";
 
 type Row = Record<string, unknown>;
@@ -612,6 +615,50 @@ export function costSettingsFromRow(r: Row): CostSettings {
     overtimeMultiplier: Number.isFinite(m) && m >= 1 ? m : DEFAULT_OVERTIME_MULTIPLIER,
     financialPct: Number.isFinite(f) && f >= 0 ? f : DEFAULT_FINANCIAL_PCT,
     hoursPerDay: Number.isFinite(h) && h >= 1 && h <= 24 ? h : DEFAULT_HOURS_PER_DAY,
+    laborValuation: (r.labor_valuation === "general" ? "general" : "operator") satisfies LaborValuation,
+  };
+}
+
+// ── Precios con vigencia y correcciones (Lote 5A) ─────────
+
+export function priceRecordToRow(org: string, r: PriceRecord): Row {
+  return {
+    organization_id: org,
+    id: r.id,
+    kind: r.kind,
+    subject_id: r.subjectId,
+    value: r.value,
+    valid_from: r.validFrom,
+    created_at: r.createdAt,
+    created_by: r.createdBy,
+  };
+}
+
+export function priceRecordFromRow(r: Row): PriceRecord {
+  return {
+    id: String(r.id),
+    kind: r.kind as PriceRecord["kind"],
+    subjectId: String(r.subject_id),
+    value: num(r.value),
+    validFrom: String(r.valid_from),
+    createdAt: iso(r.created_at),
+    createdBy: String(r.created_by ?? ""),
+  };
+}
+
+export function correctionFromRow(r: Row): ValueCorrection {
+  return {
+    id: String(r.id),
+    projectId: String(r.project_id),
+    target: r.target as ValueCorrection["target"],
+    lineId: opt(r.line_id as string | null),
+    field: r.field as ValueCorrection["field"],
+    description: String(r.description ?? ""),
+    oldValue: r.old_value === null || r.old_value === undefined ? null : num(r.old_value),
+    newValue: num(r.new_value),
+    reason: String(r.reason),
+    correctedBy: String(r.corrected_by),
+    correctedAt: iso(r.corrected_at),
   };
 }
 

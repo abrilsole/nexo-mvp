@@ -5,11 +5,14 @@
 // alcanza con comparar referencias).
 // ─────────────────────────────────────────────────────────────
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { AlertSettings, AppRole, CostSettings, HourRate, MaterialRequest, Operator, Project } from "@/types";
+import type { AlertSettings, AppRole, CostSettings, HourRate, MaterialRequest, Operator, PriceRecord, Project, ValueCorrection } from "@/types";
 import { DEFAULT_FINANCIAL_PCT, DEFAULT_HOUR_RATES, DEFAULT_HOURS_PER_DAY, DEFAULT_OVERTIME_MULTIPLIER, DEFAULT_SETTINGS } from "@/lib/constants";
 import type { StockState } from "@/lib/stock";
 import type { TallerCall } from "./taller";
+import type { CorrectionInput, CorrectionReceipt } from "@/lib/corrections";
 import { deriveLedgerFromLegacy } from "@/lib/stock-legacy";
+import { todayISO } from "@/lib/formatting";
+import { hourRatesAt, operatorsAt, OVERTIME_SUBJECT, valueAt } from "@/lib/price-history";
 import {
   CHILD_TABLES,
   childrenToRows,
@@ -27,6 +30,9 @@ import {
   hourRateFromRow,
   hourRateToRow,
   reusableFromRow,
+  priceRecordFromRow,
+  priceRecordToRow,
+  correctionFromRow,
   type ChildKey,
 } from "./mappers";
 
@@ -46,10 +52,14 @@ export interface Workspace extends WorkspaceData {
   userName: string;
   userEmail: string;
   role: AppRole;
-  /** Solo Gestión: Taller recibe siempre el valor por defecto (nunca lee cost_settings). */
+  /** Solo Administrativo: los demás roles reciben el valor por defecto (nunca leen cost_settings). */
   costSettings: CostSettings;
-  /** Tipos de hora con su tarifa. Solo Gestión: Taller recibe la lista por defecto sin usarla (nunca lee hour_rates). */
+  /** Tipos de hora con la tarifa vigente hoy. Solo Administrativo (los demás roles nunca leen hour_rates). */
   hourRates: HourRate[];
+  /** Historial de precios con vigencia. Administrativo: todo · Compras: solo precios de materiales · el resto: vacío. */
+  priceHistory: PriceRecord[];
+  /** Correcciones auditadas de valores congelados (solo Administrativo). */
+  corrections: ValueCorrection[];
   demoSeeded: boolean;
   /** La empresa tiene cargados los datos de demostración (muestra "Restaurar datos demo"). */
   isDemo: boolean;
@@ -77,7 +87,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
   const membership = check(
     await db
       .from("organization_members")
-      .select("organization_id, display_name, role, organizations(name, demo_seeded, is_demo, alert_settings)")
+      .select("organization_id, display_name, role, deactivated_at, organizations(name, demo_seeded, is_demo, alert_settings)")
       .eq("user_id", user.id)
       .order("created_at")
       .limit(1)
@@ -86,11 +96,14 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     organization_id: string;
     display_name: string;
     role: AppRole;
+    deactivated_at: string | null;
     organizations: { name: string; demo_seeded: boolean; is_demo: boolean; alert_settings: AlertSettings | null } | null;
   } | null;
   if (!membership) throw new Error("Tu usuario no tiene una empresa asociada.");
-  // Taller no lee las tablas (tienen costos): todo lo suyo llega por taller_workspace().
+  // Operario, Compras y Jefe de planta no leen las tablas (tienen importes): lo suyo llega por su función.
   if (membership.role === "operator") return loadTallerWorkspace(db, user, membership.display_name);
+  if (membership.deactivated_at) throw new Error(INACTIVE_USER_MESSAGE);
+  if (membership.role === "compras" || membership.role === "jefe_planta") return loadStaffWorkspace(db, user, membership.role);
   if (!membership.organizations) throw new Error("Tu usuario no tiene una empresa asociada.");
 
   const org = membership.organization_id;
@@ -112,6 +125,8 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     resolved,
     costSettings,
     hourRates,
+    priceHistory,
+    corrections,
   ] = await Promise.all([
     check(await db.from("projects").select("*").eq("organization_id", org).order("created_at", { ascending: false })) as Record<
       string,
@@ -133,6 +148,8 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     check(await db.from("resolved_alerts").select("alert_id").eq("organization_id", org)) as { alert_id: string }[],
     loadCostSettings(db, org),
     loadHourRates(db, org),
+    loadOptional(db, "price_history", org, priceRecordFromRow),
+    loadOptional(db, "value_corrections", org, correctionFromRow),
   ]);
 
   const domainProjects = projectsFromRows({ projects, budgetLines, purchaseEntries, materialUsages, actualEntries, activity, items, stageLogs, attachments });
@@ -154,10 +171,13 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     role: membership.role,
     demoSeeded: membership.organizations.demo_seeded,
     isDemo: membership.organizations.is_demo,
-    costSettings,
-    hourRates,
+    // Valores vigentes HOY (un cambio con fecha futura todavía no aplica).
+    costSettings: { ...costSettings, overtimeMultiplier: valueAt(priceHistory, "overtime_multiplier", OVERTIME_SUBJECT, todayISO(), costSettings.overtimeMultiplier) },
+    hourRates: hourRatesAt(hourRates, priceHistory, todayISO()),
+    priceHistory,
+    corrections,
     projects: domainProjects,
-    operators: operators.map(operatorFromRow),
+    operators: operatorsAt(operators.map(operatorFromRow), priceHistory, todayISO()),
     stock,
     requests: requests.map(requestFromRow),
     stockMigrated,
@@ -170,7 +190,15 @@ export const DEFAULT_COST_SETTINGS: CostSettings = {
   overtimeMultiplier: DEFAULT_OVERTIME_MULTIPLIER,
   financialPct: DEFAULT_FINANCIAL_PCT,
   hoursPerDay: DEFAULT_HOURS_PER_DAY,
+  laborValuation: "operator",
 };
+
+/** Tabla de Administrativo que puede no existir todavía en la base (migración pendiente): sin ella, lista vacía. */
+async function loadOptional<T>(db: SupabaseClient, table: string, org: string, map: (r: Record<string, unknown>) => T): Promise<T[]> {
+  const { data, error } = await db.from(table).select("*").eq("organization_id", org);
+  if (error || !data) return [];
+  return (data as Record<string, unknown>[]).map(map);
+}
 
 /** Multiplicador de horas extra, gasto financiero y jornada de la empresa (tabla de Gestión). Sin fila → valores por defecto. */
 async function loadCostSettings(db: SupabaseClient, org: string): Promise<CostSettings> {
@@ -189,7 +217,11 @@ async function loadHourRates(db: SupabaseClient, org: string): Promise<HourRate[
 
 /** Mensaje para un operario dado de baja que inicia sesión. */
 export const INACTIVE_OPERATOR_MESSAGE =
-  "Tu usuario de Taller fue dado de baja, así que ya no tiene acceso a los proyectos. Si es un error, pedile a Gestión que te reactive.";
+  "Tu usuario de Operario fue dado de baja, así que ya no tiene acceso a los proyectos. Si es un error, pedile a un usuario Administrativo que te reactive.";
+
+/** Mensaje para cualquier otra cuenta dada de baja. */
+export const INACTIVE_USER_MESSAGE =
+  "Tu usuario fue dado de baja, así que ya no tiene acceso a los datos de la empresa. Si es un error, pedile a un usuario Administrativo que te reactive.";
 
 type Row = Record<string, unknown>;
 
@@ -222,6 +254,8 @@ async function loadTallerWorkspace(db: SupabaseClient, user: { id: string; email
     role: "operator",
     costSettings: { ...DEFAULT_COST_SETTINGS },
     hourRates: [],
+    priceHistory: [],
+    corrections: [],
     demoSeeded: true,
     isDemo: false,
     stockMigrated: false,
@@ -237,6 +271,70 @@ async function loadTallerWorkspace(db: SupabaseClient, user: { id: string; email
       attachments: json.attachments ?? [],
     }),
     operators: [operator],
+    stock: { lots: (json.stock_lots ?? []).map(lotFromRow), movements: (json.stock_movements ?? []).map(movementFromRow) },
+    requests: (json.material_requests ?? []).map(requestFromRow),
+    settings: { ...DEFAULT_SETTINGS },
+    resolvedAlertIds: [],
+  };
+}
+
+interface StaffWorkspaceJson {
+  status: "active" | "inactive";
+  organization_id?: string;
+  organization_name?: string;
+  display_name?: string;
+  projects?: Row[];
+  budget_lines?: Row[];
+  purchase_entries?: Row[];
+  material_usages?: Row[];
+  actual_entries?: Row[];
+  operators?: Row[];
+  project_items?: Row[];
+  stage_logs?: Row[];
+  stock_lots?: Row[];
+  stock_movements?: Row[];
+  material_requests?: Row[];
+  price_history?: Row[];
+}
+
+/**
+ * Las funciones de Compras y Jefe de planta NO devuelven los importes que esos roles no pueden ver.
+ * En memoria esos campos quedan en 0 para que el modelo esté completo; sus pantallas no los muestran.
+ */
+const withZeros = (rows: Row[] | undefined, zeros: Row): Row[] => (rows ?? []).map((r) => ({ ...zeros, ...r }));
+
+/** Workspace de Compras o Jefe de planta, desde su función (compras_workspace / planta_workspace). */
+async function loadStaffWorkspace(db: SupabaseClient, user: { id: string; email?: string }, role: "compras" | "jefe_planta"): Promise<Workspace> {
+  const json = check(await db.rpc(role === "compras" ? "compras_workspace" : "planta_workspace")) as StaffWorkspaceJson;
+  if (json.status !== "active" || !json.organization_id) throw new Error(INACTIVE_USER_MESSAGE);
+  const projects = withZeros(json.projects, { sales_price: 0, progress_percent: 0, baseline: null });
+  const actualEntries = (json.actual_entries ?? []).map((r) => ({ ...r, amount: 0, labor: { ...((r.labor as Row | null) ?? {}), hourlyCost: 0 } }));
+  return {
+    organizationId: json.organization_id,
+    organizationName: json.organization_name ?? "",
+    userId: user.id,
+    userName: json.display_name || user.email?.split("@")[0] || "Usuario",
+    userEmail: user.email ?? "",
+    role,
+    costSettings: { ...DEFAULT_COST_SETTINGS },
+    hourRates: [],
+    priceHistory: (json.price_history ?? []).map(priceRecordFromRow),
+    corrections: [],
+    demoSeeded: true,
+    isDemo: false,
+    stockMigrated: false,
+    projects: projectsFromRows({
+      projects,
+      budgetLines: json.budget_lines ?? [],
+      purchaseEntries: json.purchase_entries ?? [],
+      materialUsages: json.material_usages ?? [],
+      actualEntries,
+      activity: [],
+      items: json.project_items ?? [],
+      stageLogs: json.stage_logs ?? [],
+      attachments: [],
+    }),
+    operators: withZeros(json.operators, { hourly_cost: 0 }).map(operatorFromRow),
     stock: { lots: (json.stock_lots ?? []).map(lotFromRow), movements: (json.stock_movements ?? []).map(movementFromRow) },
     requests: (json.material_requests ?? []).map(requestFromRow),
     settings: { ...DEFAULT_SETTINGS },
@@ -329,6 +427,7 @@ export async function saveCostSettings(db: SupabaseClient, org: string, settings
           overtime_multiplier: settings.overtimeMultiplier,
           financial_pct: settings.financialPct,
           hours_per_day: settings.hoursPerDay,
+          labor_valuation: settings.laborValuation,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "organization_id" },
@@ -338,6 +437,38 @@ export async function saveCostSettings(db: SupabaseClient, org: string, settings
 
 export async function saveHourRates(db: SupabaseClient, org: string, rates: HourRate[]) {
   check(await db.from("hour_rates").upsert(rates.map((r, i) => hourRateToRow(org, r, i)), { onConflict: "organization_id,id" }));
+}
+
+/** El historial de precios solo crece: se insertan los registros nuevos. */
+export async function addPriceRecords(db: SupabaseClient, org: string, records: PriceRecord[]) {
+  if (records.length) check(await db.from("price_history").insert(records.map((r) => priceRecordToRow(org, r))));
+}
+
+export interface CorrectionRequest {
+  projectId: string;
+  target: ValueCorrection["target"];
+  field: ValueCorrection["field"];
+  lineId?: string;
+  newValue: number;
+  reason: string;
+}
+
+/** Corrección de un valor congelado: la hace el servidor (admin_correct_value) y deja el registro. */
+export async function correctValue(db: SupabaseClient, projectId: string, input: CorrectionInput): Promise<CorrectionReceipt> {
+  const res = check(
+    await db.rpc("admin_correct_value", {
+      p: { project_id: projectId, target: input.target, field: input.field, line_id: input.lineId ?? null, new_value: input.newValue, reason: input.reason },
+    }),
+  ) as { id: string; corrected_at: string; corrected_by: string; old_value: number | string | null; description: string; activity_id: string; message: string };
+  return {
+    id: res.id,
+    correctedAt: new Date(res.corrected_at).toISOString(),
+    correctedBy: res.corrected_by,
+    oldValue: res.old_value === null ? null : Number(res.old_value),
+    description: res.description,
+    activityId: res.activity_id,
+    message: res.message,
+  };
 }
 
 export async function setAlertResolved(db: SupabaseClient, org: string, alertId: string, resolved: boolean) {

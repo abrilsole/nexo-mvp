@@ -13,6 +13,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const params = await searchParams;
   const next = safeNext(typeof params.next === "string" ? params.next : undefined);
   const authError = params.error === "auth";
+  const inviteNotice = params.error === "invite";
 
   return (
     <div className="landing relative flex min-h-screen flex-col overflow-hidden">
@@ -42,6 +43,11 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           {authError && (
             <p role="alert" className="mt-6 rounded-xl bg-bad/5 px-3 py-2 text-sm text-bad ring-1 ring-bad/20">
               No pudimos iniciar sesión. Probá de nuevo.
+            </p>
+          )}
+          {inviteNotice && (
+            <p role="status" className="mt-6 rounded-xl bg-white px-3 py-2 text-sm text-ink-soft ring-1 ring-line">
+              Tu invitación quedó confirmada. Entrá con Google usando el mismo mail al que te llegó la invitación.
             </p>
           )}
           <div className="mt-8">

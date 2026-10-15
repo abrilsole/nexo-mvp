@@ -73,7 +73,7 @@ describe("la demo se carga completa con reset_workspace", () => {
     expect(m).toBe(seed.stock.movements.length);
   });
   it("un operario no puede resetear la empresa", async () => {
-    expect(await errorAs(db, juan, (tx) => tx.query("select reset_workspace('{}'::jsonb)"))).toMatch(/Solo Gestión/);
+    expect(await errorAs(db, juan, (tx) => tx.query("select reset_workspace('{}'::jsonb)"))).toMatch(/Solo un usuario Administrativo/);
   });
 });
 
@@ -125,7 +125,7 @@ describe("Gestión (manager)", () => {
           [org, MAIN_DEMO_PROJECT_ID],
         ),
       ),
-    ).toMatch(/bloqueado/);
+    ).toMatch(/congelado/);
   });
   it("no se cargan horas con fecha futura ni más de 24 h por día", async () => {
     const future = new Date();

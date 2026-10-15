@@ -88,7 +88,7 @@ function PositionCard({ project, canManage }: { project: Project; canManage: boo
       <CardHeader>
         <CardTitle>Requerido vs. asignado a este proyecto</CardTitle>
         <CardDescription>
-          Taller sólo puede consumir lo <strong>asignado</strong> a este proyecto. Lo que falta se cubre con stock existente o con una compra.
+          Un operario sólo puede consumir lo <strong>asignado</strong> a este proyecto. Lo que falta se cubre con stock existente o con una compra.
         </CardDescription>
       </CardHeader>
       {rows.length === 0 ? (

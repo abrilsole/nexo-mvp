@@ -10,6 +10,7 @@ import type { BudgetLineInput } from "@/lib/project-operations";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { useCatalogPrice } from "@/store/selectors";
 
 /** Fila en edición: los números como texto para permitir vacíos. quantity vacío = monto directo. */
 export interface DraftLine {
@@ -75,6 +76,7 @@ export function BudgetEditor({
   errors?: Record<string, string>;
 }) {
   const update = (key: string, patch: Partial<DraftLine>) => onChange(lines.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const catalogPrice = useCatalogPrice();
   return (
     <div>
       <datalist id="catalog-materials">
@@ -124,7 +126,7 @@ export function BudgetEditor({
                   placeholder={l.category === "materials" ? "Ej.: Melamina blanca 18 mm" : "Concepto"}
                   onChange={(e) => {
                     const cat = MATERIAL_CATALOG.find((m) => m.name === e.target.value);
-                    update(l.key, { description: e.target.value, ...(cat ? { unit: cat.unit, unitCost: l.unitCost || String(cat.referenceCost) } : {}) });
+                    update(l.key, { description: e.target.value, ...(cat ? { unit: cat.unit, unitCost: l.unitCost || String(catalogPrice(cat.id)) } : {}) });
                   }}
                   aria-invalid={!!errors[l.key]}
                 />

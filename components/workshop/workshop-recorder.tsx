@@ -30,7 +30,7 @@ export function WorkshopRecorder({ projectId }: { projectId: string }) {
       <Shell>
         <p className="py-10 text-center text-slate-600">
           {!operator
-            ? "Elegí un operario en el inicio de Taller para continuar."
+            ? "Elegí un operario en “Mi día” para continuar."
             : "No tenés acceso a este proyecto: no está activo en ejecución o no estás asignado."}
         </p>
       </Shell>

@@ -15,7 +15,7 @@ export const LOGIN_HREF = "/login";
 export const NAV_LINKS = [
   { href: "#producto", label: "Producto" },
   { href: "#como-funciona", label: "Cómo funciona" },
-  { href: "#taller", label: "Modo Taller" },
+  { href: "#taller", label: "Modo Operario" },
   { href: "#piloto", label: "Piloto" },
   { href: "#preguntas", label: "Preguntas" },
 ];
@@ -92,7 +92,7 @@ export const STEPS = [
     body: "Valoriza con reglas explícitas (el costo del lote del que sale el material) y guarda de dónde salió el precio.",
   },
   {
-    title: "Gestión ve la rentabilidad y decide",
+    title: "Administrativo ve la rentabilidad y decide",
     body: "Costo real hasta hoy, rentabilidad proyectada, desvíos, alertas y actividad: quién, qué y cuándo.",
   },
 ];

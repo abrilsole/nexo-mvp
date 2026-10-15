@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { HardHat, Plus, Trash2, UserCheck, UserMinus } from "lucide-react";
 import type { Operator } from "@/types";
 import { parseDecimal } from "@/lib/schemas";
-import { formatCurrency, formatDate, formatNumber } from "@/lib/formatting";
+import { formatCurrency, formatDate, formatNumber, todayISO } from "@/lib/formatting";
 import { activeOperators, operatorHasRecords, visibleOperators } from "@/lib/operators";
 import { useAppStore, type Result } from "@/store/use-app-store";
 import { useIdentity } from "@/store/selectors";
@@ -16,6 +16,7 @@ import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { DeactivatePanel } from "./deactivate-panel";
+import { PriceHistoryList } from "@/components/settings/price-history-list";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type Confirm = "deactivate" | "delete" | null;
@@ -29,13 +30,14 @@ function OperatorDialog({ operator, hasRecords, open, onOpenChange }: { operator
   const [role, setRole] = useState(operator?.role ?? "");
   const [rate, setRate] = useState(operator ? String(operator.hourlyCost) : "");
   const [email, setEmail] = useState(operator?.email ?? "");
+  const [validFrom, setValidFrom] = useState(todayISO());
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [error, setError] = useState("");
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
     const input = { name, role, hourlyCost: parseDecimal(rate), email: email.trim() || undefined, userId: operator?.userId };
-    const r = operator ? updateOperator(operator.id, input) : createOperator(input);
+    const r = operator ? updateOperator(operator.id, input, validFrom) : createOperator(input);
     if (!r.ok) return setError(r.error);
     onOpenChange(false);
   };
@@ -53,14 +55,25 @@ function OperatorDialog({ operator, hasRecords, open, onOpenChange }: { operator
         <DialogHeader>
           <DialogTitle>{operator ? "Editar operario" : "Nuevo operario"}</DialogTitle>
           <DialogDescription>
-            El costo por hora se usa para valorizar las horas que cargue. Si lo cambiás, las horas ya cargadas conservan su valor.
+            El costo por hora se usa para valorizar las horas que cargue. Un cambio vale desde la fecha que indiques: las horas anteriores conservan su
+            valor.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={save} className="space-y-4" noValidate>
           <Field label="Nombre" htmlFor="op-name"><Input id="op-name" value={name} onChange={(e) => setName(e.target.value)} /></Field>
           <Field label="Rol o especialidad" htmlFor="op-role"><Input id="op-role" value={role} onChange={(e) => setRole(e.target.value)} placeholder="Carpintería, Armado…" /></Field>
           <Field label="Costo por hora ($)" htmlFor="op-rate"><Input id="op-rate" inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} /></Field>
-          <Field label="Email de acceso (opcional)" htmlFor="op-email" hint="Si el operario entra con este email, ve sólo Taller y sus proyectos asignados.">
+          {operator && parseDecimal(rate) !== operator.hourlyCost && (
+            <Field label="El nuevo costo vale desde" htmlFor="op-valid-from" hint="Por defecto, hoy. Las horas cargadas antes de esa fecha no cambian.">
+              <Input id="op-valid-from" type="date" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />
+            </Field>
+          )}
+          {operator && <PriceHistoryList kind="operator_cost" subjectId={operator.id} label={`costo por hora de ${operator.name}`} />}
+          <Field
+            label="Email (opcional)"
+            htmlFor="op-email"
+            hint="Es un dato de la persona. Para que entre a Blerp como Operario, invitalo desde Configuración → Usuarios (puede existir sin usuario)."
+          >
             <Input id="op-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </Field>
           {operator && (

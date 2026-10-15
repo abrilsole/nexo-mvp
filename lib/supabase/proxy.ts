@@ -2,8 +2,8 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isSupabaseConfigured, SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "./env";
 
-/** Rutas públicas: el landing, el login y el intercambio del código OAuth. */
-const PUBLIC_PATHS = ["/", "/login", "/auth/callback"];
+/** Rutas públicas: el landing, el login, el intercambio del código OAuth y la confirmación de una invitación. */
+const PUBLIC_PATHS = ["/", "/login", "/auth/callback", "/auth/confirm"];
 
 function isPublic(pathname: string) {
   return PUBLIC_PATHS.some((p) => (p === "/" ? pathname === "/" : pathname === p || pathname.startsWith(`${p}/`)));

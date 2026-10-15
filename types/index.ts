@@ -53,8 +53,6 @@ export type MaterialSource = "purchased_for_project" | "existing_stock" | "reuse
 /** Cómo se determinó el costo unitario de un consumo (trazabilidad, evita caja negra). */
 export type UnitCostOrigin = "manual" | "purchase" | "budget" | "catalog" | "reusable_pool";
 
-export type AppMode = "management" | "workshop";
-
 export type AlertLevel = "info" | "warning" | "critical";
 
 /**
@@ -91,7 +89,13 @@ export interface BudgetLine {
   overtimeMultiplier?: number;
 }
 
-/** Costos de la empresa que solo ve Gestión (Taller nunca los recibe). */
+/**
+ * Cómo se valúan las horas reales: con el costo de cada operario o con la tarifa general de Mano de obra.
+ * Hipótesis a confirmar con el cliente: el modelo admite las dos (por defecto, la del operario, como hasta ahora).
+ */
+export type LaborValuation = "operator" | "general";
+
+/** Costos de la empresa que solo ve Administrativo (el resto de los roles nunca los recibe). */
 export interface CostSettings {
   /** Horas extra = tarifa por hora × este multiplicador. */
   overtimeMultiplier: number;
@@ -99,6 +103,41 @@ export interface CostSettings {
   financialPct: number;
   /** Jornada del operario, en horas por día (Configuración). */
   hoursPerDay: number;
+  laborValuation: LaborValuation;
+}
+
+/** Qué valor tiene historial con vigencia. */
+export type PriceKind = "hour_rate" | "overtime_multiplier" | "operator_cost" | "material_price";
+
+/**
+ * Un valor con "vigente desde" (Lote 5A). Un cambio es un registro nuevo: el historial solo crece.
+ * subjectId: tipo de hora (labor/design/admin), "default" (multiplicador), id del operario o id del material.
+ */
+export interface PriceRecord {
+  id: string;
+  kind: PriceKind;
+  subjectId: string;
+  value: number;
+  /** yyyy-mm-dd */
+  validFrom: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+/** Corrección auditada de un valor congelado (proyecto aprobado o cerrado). */
+export interface ValueCorrection {
+  id: string;
+  projectId: string;
+  target: "sales_price" | "budget_line";
+  lineId?: string;
+  field: "sales_price" | "quantity" | "unit_cost";
+  /** "Precio de venta" o la descripción de la línea. */
+  description: string;
+  oldValue: number | null;
+  newValue: number;
+  reason: string;
+  correctedBy: string;
+  correctedAt: string;
 }
 
 /** Categorías de reporte que pueden tener horas. */
@@ -449,4 +488,8 @@ export interface DemoUser {
 }
 
 /** Rol del usuario dentro de la empresa. owner/member = Gestión; operator = Taller. */
-export type AppRole = "owner" | "member" | "operator";
+/**
+ * Rol de la cuenta en la base. owner/member = Administrativo (owner es quien creó la empresa),
+ * compras = Compras, jefe_planta = Jefe de planta, operator = Operario. Ver lib/permissions.ts.
+ */
+export type AppRole = "owner" | "member" | "compras" | "jefe_planta" | "operator";

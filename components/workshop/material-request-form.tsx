@@ -43,7 +43,7 @@ export function MaterialRequestForm({ project, onDone }: { project: Project; onD
       note,
     });
     if (!res.ok) return setErrors({ form: res.error });
-    onDone(`Pediste ${formatQty(q, unit)} de ${name}. Gestión lo va a ver.`);
+    onDone(`Pediste ${formatQty(q, unit)} de ${name}. Administrativo lo va a ver.`);
   };
 
   return (

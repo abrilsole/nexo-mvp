@@ -3,8 +3,8 @@
 // Store global (Zustand). Los datos viven en Supabase: el store los carga
 // al entrar (WorkspaceGate), aplica las operaciones puras de lib/ en memoria
 // (la UI sigue siendo síncrona) y encola la escritura de lo que cambió.
-// Gestión, Taller, Stock y el detalle del proyecto leen SIEMPRE de este mismo estado.
-// Sólo el modo Gestión/Taller (y el operario simulado) se guarda en localStorage.
+// Todas las pantallas leen SIEMPRE de este mismo estado.
+// Sólo el rol elegido en la demo (y el operario simulado) se guarda en localStorage.
 // ─────────────────────────────────────────────────────────────
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -12,16 +12,18 @@ import type {
   AlertSettings,
   CostSettings,
   HourRate,
-  AppMode,
   AppRole,
   Attachment,
   MaterialRequest,
   Operator,
+  PriceRecord,
   Project,
   ProjectStatus,
   StockLot,
+  ValueCorrection,
 } from "@/types";
-import { DEFAULT_HOUR_RATES, DEFAULT_SETTINGS } from "@/lib/constants";
+import { DEFAULT_HOUR_RATES, DEFAULT_SETTINGS, DEMO_USERS } from "@/lib/constants";
+import { roleKeyOf, type RoleKey } from "@/lib/permissions";
 import { costSettingsError, hourRatesError } from "@/lib/cost-settings";
 import { buildSeed } from "@/lib/seed-data";
 import * as ops from "@/lib/project-operations";
@@ -35,6 +37,9 @@ import { lotToRow } from "@/lib/supabase/mappers";
 import * as remote from "@/lib/supabase/workspace";
 import { DEFAULT_COST_SETTINGS, type Workspace, type WorkspaceData } from "@/lib/supabase/workspace";
 import { tallerCalls } from "@/lib/supabase/taller";
+import { todayISO } from "@/lib/formatting";
+import { hourRatesAt, laborCostAt, OVERTIME_SUBJECT, priceChange, priceChangeError, valueAt } from "@/lib/price-history";
+import { applyCorrection, correctionError, type CorrectionInput } from "@/lib/corrections";
 
 export type Result<T = undefined> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -48,11 +53,16 @@ interface AppState {
   settings: AlertSettings;
   /** Multiplicador de horas extra (solo Gestión). */
   costSettings: CostSettings;
-  /** Tipos de hora con su tarifa (solo Gestión). */
+  /** Tipos de hora con la tarifa vigente hoy (solo Administrativo). */
   hourRates: HourRate[];
+  /** Historial de precios con vigencia (Administrativo: todo · Compras: precios de materiales). */
+  priceHistory: PriceRecord[];
+  /** Correcciones auditadas de valores congelados (solo Administrativo). */
+  corrections: ValueCorrection[];
   /** La empresa tiene los datos de demostración (solo entonces se ofrece "Restaurar datos demo"). */
   isDemo: boolean;
-  currentMode: AppMode;
+  /** Solo en una empresa demo y para Administrativo: con qué rol se está mirando la app. */
+  currentMode: RoleKey;
   resolvedAlertIds: string[];
 
   /** Empresa y usuario de la sesión (null hasta que carga el workspace). */
@@ -63,13 +73,13 @@ interface AppState {
   userEmail: string;
   /** Rol real del usuario en la empresa. */
   role: AppRole;
-  /** Sólo para Gestión viendo el modo Taller: con qué operario simular el flujo. */
+  /** Solo para Administrativo viendo la demo como Operario: con qué operario simular el flujo. */
   actingOperatorId: string | null;
   syncStatus: SyncStatus;
   syncError: string | null;
 
   loadWorkspace: (ws: Workspace) => void;
-  setMode: (mode: AppMode) => void;
+  setMode: (mode: RoleKey) => void;
   setActingOperator: (id: string | null) => void;
 
   createProject: (input: ops.NewProjectInput) => Result<string>;
@@ -115,7 +125,8 @@ interface AppState {
   updateLotLocation: (lotId: string, location: string) => Result;
 
   createOperator: (input: people.OperatorInput) => Result<string>;
-  updateOperator: (id: string, input: people.OperatorInput) => Result;
+  /** Un cambio de costo por hora vale desde `validFrom` (hoy por defecto): las horas anteriores no cambian. */
+  updateOperator: (id: string, input: people.OperatorInput, validFrom?: string) => Result;
   /**
    * Baja lógica: el operario deja de aparecer en equipos y Taller. Sus horas se conservan.
    * `plan` da destino a cada proyecto no finalizado donde estaba asignado (otro operario o null = "Sin asignar").
@@ -138,9 +149,17 @@ interface AppState {
   resolveAlert: (alertId: string) => void;
   reopenAlert: (alertId: string) => void;
   updateSettings: (patch: Partial<AlertSettings>) => void;
-  updateCostSettings: (patch: Partial<CostSettings>) => Result;
-  /** Guarda las tarifas. Las cotizaciones ya guardadas conservan la tarifa con la que se hicieron. */
-  saveHourRates: (rates: HourRate[]) => Result;
+  /** Un cambio del multiplicador de horas extra vale desde `validFrom` (hoy por defecto). */
+  updateCostSettings: (patch: Partial<CostSettings>, validFrom?: string) => Result;
+  /**
+   * Guarda las tarifas como un cambio con "vigente desde" (hoy por defecto). Lo ya cotizado y las horas
+   * ya cargadas conservan su valor; un cambio con fecha futura recién aplica ese día.
+   */
+  saveHourRates: (rates: HourRate[], validFrom?: string) => Result;
+  /** Precios de catálogo de materiales con "vigente desde". Solo afectan cotizaciones nuevas. */
+  setMaterialPrices: (prices: Array<{ materialId: string; value: number; previousValue: number }>, validFrom: string) => Result;
+  /** Corrige un valor congelado (proyecto aprobado o cerrado) con motivo: queda registrado. */
+  correctValue: (projectId: string, input: CorrectionInput) => Promise<Result>;
   /** Reemplaza los datos de la empresa por la demo de Madera Sur. */
   resetDemo: () => Promise<Result>;
   /** Borra todos los datos de la empresa para empezar de cero. */
@@ -173,21 +192,32 @@ const EMPTY_DATA: WorkspaceData = {
   resolvedAlertIds: [],
 };
 
-/** Quién está operando realmente: el rol de la cuenta o, en modo Taller, un operario. */
-export function effectiveIdentity(s: Pick<AppState, "role" | "currentMode" | "operators" | "userId" | "userEmail" | "actingOperatorId" | "userName">): {
+/**
+ * Quién está operando: el rol de la cuenta o, en una empresa demo, el rol elegido por un Administrativo
+ * (con su usuario de ejemplo; como Operario, el operario elegido).
+ */
+export function effectiveIdentity(
+  s: Pick<AppState, "role" | "currentMode" | "isDemo" | "operators" | "userId" | "userEmail" | "actingOperatorId" | "userName">,
+): {
   role: AppRole;
+  roleKey: RoleKey;
   operator: Operator | undefined;
   actor: string;
 } {
   if (s.role === "operator") {
     const operator = people.operatorForUser(s.operators, s.userId, s.userEmail);
-    return { role: "operator", operator, actor: operator?.name ?? s.userName };
+    return { role: "operator", roleKey: "operario", operator, actor: operator?.name ?? s.userName };
   }
-  if (s.currentMode === "workshop") {
+  const real = roleKeyOf(s.role);
+  const view = real === "admin" && s.isDemo ? s.currentMode : real;
+  if (view === "operario") {
     const operator = s.operators.find((o) => o.id === s.actingOperatorId && o.active);
-    return { role: "operator", operator, actor: operator?.name ?? s.userName };
+    return { role: "operator", roleKey: "operario", operator, actor: operator?.name ?? s.userName };
   }
-  return { role: s.role, operator: undefined, actor: s.userName };
+  if (view === "compras" || view === "jefe_planta") {
+    return { role: view, roleKey: view, operator: undefined, actor: real === "admin" ? DEMO_USERS[view].name : s.userName };
+  }
+  return { role: s.role, roleKey: "admin", operator: undefined, actor: s.userName };
 }
 
 export const useAppStore = create<AppState>()(
@@ -228,6 +258,9 @@ export const useAppStore = create<AppState>()(
         const stock = next.stock ?? prev.stock;
         const operators = next.operators ?? prev.operators;
         const requests = next.requests ?? prev.requests;
+        if (prev.role === "compras" || prev.role === "jefe_planta") {
+          throw new ops.DomainError("Con tu rol todavía no se cargan datos en Blerp.");
+        }
         set({ projects, stock, operators, requests });
         if (prev.role === "operator") {
           // Taller no escribe tablas: cada registro nuevo va a su función del servidor (que calcula los costos).
@@ -262,7 +295,7 @@ export const useAppStore = create<AppState>()(
       };
 
       const requireManager = (what: string) => {
-        if (!isManager(effectiveIdentity(get()).role)) throw new ops.DomainError(`${what} lo hace Gestión.`);
+        if (!isManager(effectiveIdentity(get()).role)) throw new ops.DomainError(`${what} lo hace un usuario Administrativo.`);
       };
 
       /** Aplica una operación pura sobre un proyecto. */
@@ -290,7 +323,7 @@ export const useAppStore = create<AppState>()(
         const run2 = queue.then(async (): Promise<Result> => {
           try {
             await remote.replaceWorkspace(createClient(), org, isDemo ? data : null);
-            set({ ...data, isDemo, currentMode: "management", actingOperatorId: null, syncStatus: "idle", syncError: null });
+            set({ ...data, isDemo, currentMode: "admin", actingOperatorId: null, syncStatus: "idle", syncError: null });
             return { ok: true, value: undefined };
           } catch (e) {
             set({ syncStatus: "error", syncError: `No se pudo guardar: ${errorMessage(e)}` });
@@ -301,12 +334,25 @@ export const useAppStore = create<AppState>()(
         return run2;
       };
 
+      /** Agrega registros al historial de precios (en memoria y en la base). El historial solo crece. */
+      const addHistory = (records: PriceRecord[]) => {
+        if (records.length === 0) return;
+        set({ priceHistory: [...get().priceHistory, ...records] });
+        void persistRemote((db, org) => remote.addPriceRecords(db, org, records));
+      };
+
+      /** Registros de un cambio de valor con vigencia. */
+      const changeOf = (kind: PriceRecord["kind"], subjectId: string, value: number, previousValue: number, validFrom: string) =>
+        priceChange(get().priceHistory, { kind, subjectId, value, validFrom, previousValue, createdBy: effectiveIdentity(get()).actor, now: new Date().toISOString() });
+
       return {
         ...EMPTY_DATA,
         costSettings: { ...DEFAULT_COST_SETTINGS },
         hourRates: DEFAULT_HOUR_RATES.map((r) => ({ ...r })),
+        priceHistory: [],
+        corrections: [],
         isDemo: false,
-        currentMode: "management",
+        currentMode: "admin",
         organizationId: null,
         organizationName: "",
         userId: null,
@@ -326,6 +372,8 @@ export const useAppStore = create<AppState>()(
             settings: ws.settings,
             costSettings: ws.costSettings,
             hourRates: ws.hourRates,
+            priceHistory: ws.priceHistory,
+            corrections: ws.corrections,
             isDemo: ws.isDemo,
             resolvedAlertIds: ws.resolvedAlertIds,
             organizationId: ws.organizationId,
@@ -334,8 +382,8 @@ export const useAppStore = create<AppState>()(
             userName: ws.userName,
             userEmail: ws.userEmail,
             role: ws.role,
-            // Un operario real siempre ve Taller.
-            currentMode: ws.role === "operator" ? "workshop" : get().currentMode,
+            // El rol elegido para mirar la demo solo vale en una empresa demo.
+            currentMode: ws.isDemo ? get().currentMode : roleKeyOf(ws.role),
             syncStatus: "idle",
             syncError: null,
           });
@@ -343,7 +391,7 @@ export const useAppStore = create<AppState>()(
           if (ws.stockMigrated) void persistRemote((db, org) => remote.syncStock(db, org, EMPTY_STOCK, ws.stock));
         },
 
-        setMode: (mode) => set({ currentMode: get().role === "operator" ? "workshop" : mode }),
+        setMode: (mode) => set({ currentMode: mode }),
         setActingOperator: (id) => set({ actingOperatorId: id }),
 
         createProject: (input) =>
@@ -402,7 +450,14 @@ export const useAppStore = create<AppState>()(
             return undefined;
           }),
 
-        logHours: (id, input) => mutate(id, (p) => ops.logHours(p, get().operators, input, get().settings, ctx())),
+        logHours: (id, input) =>
+          mutate(id, (p) => {
+            const { priceHistory, costSettings, hourRates } = get();
+            const laborRate = hourRates.find((r) => r.id === "labor")?.hourlyRate;
+            // La hora se valúa con el costo vigente ESE día (precios con vigencia).
+            const costAt = (op: Operator, date: string) => laborCostAt({ valuation: costSettings.laborValuation, operator: op, laborRate, history: priceHistory, date });
+            return ops.logHours(p, get().operators, input, get().settings, ctx(), costAt);
+          }),
 
         addActualEntry: (id, input) => mutate(id, (p) => ops.addActual(p, input, get().settings, ctx())),
 
@@ -467,10 +522,17 @@ export const useAppStore = create<AppState>()(
             return operator.id;
           }),
 
-        updateOperator: (id, input) =>
+        updateOperator: (id, input, validFrom = todayISO()) =>
           run(() => {
             requireManager("Editar operarios");
-            commit({ operators: people.updateOperator(get().operators, id, input) });
+            const current = get().operators.find((o) => o.id === id);
+            if (!current) throw new ops.DomainError("Operario no encontrado.");
+            const records = input.hourlyCost > 0 ? changeOf("operator_cost", id, input.hourlyCost, current.hourlyCost, validFrom) : [];
+            // El costo que se ve es el vigente hoy (un cambio con fecha futura todavía no aplica).
+            const hourlyCost = valueAt([...get().priceHistory, ...records], "operator_cost", id, todayISO(), input.hourlyCost);
+            const operators = people.updateOperator(get().operators, id, { ...input, hourlyCost: records.length ? hourlyCost : input.hourlyCost });
+            addHistory(records);
+            commit({ operators });
             return undefined;
           }),
 
@@ -557,21 +619,58 @@ export const useAppStore = create<AppState>()(
           void persistRemote((db, org) => remote.saveSettings(db, org, settings));
         },
 
-        updateCostSettings: (patch) => {
-          const costSettings = { ...get().costSettings, ...patch };
-          const error = costSettingsError(costSettings);
+        updateCostSettings: (patch, validFrom = todayISO()) => {
+          if (!isManager(effectiveIdentity(get()).role)) return { ok: false, error: "Configuración la cambia un usuario Administrativo." };
+          const prev = get().costSettings;
+          const next = { ...prev, ...patch };
+          const error = costSettingsError(next) ?? (patch.overtimeMultiplier !== undefined ? priceChangeError({ value: next.overtimeMultiplier, validFrom }) : null);
           if (error) return { ok: false, error };
+          const records = patch.overtimeMultiplier !== undefined ? changeOf("overtime_multiplier", OVERTIME_SUBJECT, next.overtimeMultiplier, prev.overtimeMultiplier, validFrom) : [];
+          const history = [...get().priceHistory, ...records];
+          // Vigente hoy: un cambio con fecha futura todavía no aplica.
+          const costSettings = { ...next, overtimeMultiplier: valueAt(history, "overtime_multiplier", OVERTIME_SUBJECT, todayISO(), next.overtimeMultiplier) };
+          addHistory(records);
           set({ costSettings });
           void persistRemote((db, org) => remote.saveCostSettings(db, org, costSettings));
           return { ok: true, value: undefined };
         },
-        saveHourRates: (rates) => {
-          const error = hourRatesError(rates);
+        saveHourRates: (rates, validFrom = todayISO()) => {
+          if (!isManager(effectiveIdentity(get()).role)) return { ok: false, error: "Las tarifas las cambia un usuario Administrativo." };
+          const error = hourRatesError(rates) ?? priceChangeError({ value: 1, validFrom });
           if (error) return { ok: false, error };
-          const hourRates = rates.map((r) => ({ ...r }));
+          const prev = get().hourRates;
+          const records = rates.flatMap((r) => changeOf("hour_rate", r.id, r.hourlyRate, prev.find((p) => p.id === r.id)?.hourlyRate ?? r.hourlyRate, validFrom));
+          const hourRates = hourRatesAt(rates, [...get().priceHistory, ...records], todayISO());
+          addHistory(records);
           set({ hourRates });
           void persistRemote((db, org) => remote.saveHourRates(db, org, hourRates));
           return { ok: true, value: undefined };
+        },
+        setMaterialPrices: (prices, validFrom) => {
+          if (!isManager(effectiveIdentity(get()).role)) return { ok: false, error: "Los precios los cambia un usuario Administrativo." };
+          const bad = prices.map((p) => priceChangeError({ value: p.value, validFrom })).find(Boolean);
+          if (bad) return { ok: false, error: bad };
+          addHistory(prices.flatMap((p) => changeOf("material_price", p.materialId, p.value, p.previousValue, validFrom)));
+          return { ok: true, value: undefined };
+        },
+        correctValue: async (projectId, input) => {
+          const project = get().projects.find((p) => p.id === projectId);
+          if (!project) return { ok: false, error: "Proyecto no encontrado." };
+          if (!isManager(effectiveIdentity(get()).role)) return { ok: false, error: "Las correcciones las hace un usuario Administrativo." };
+          const error = correctionError(project, input);
+          if (error) return { ok: false, error };
+          try {
+            // Primero se terminan de guardar los cambios pendientes; la corrección la registra el servidor.
+            await queue;
+            const receipt = await remote.correctValue(createClient(), projectId, input);
+            const current = get().projects.find((p) => p.id === projectId) ?? project;
+            const res = applyCorrection(current, input, receipt);
+            // Ya está guardado en la base: se actualiza la memoria sin volver a escribir.
+            set({ projects: get().projects.map((p) => (p.id === projectId ? res.project : p)), corrections: [...get().corrections, res.correction] });
+            return { ok: true, value: undefined };
+          } catch (e) {
+            return { ok: false, error: errorMessage(e) };
+          }
         },
 
         resetDemo: () => replaceAll(demoData(), true),
@@ -581,8 +680,14 @@ export const useAppStore = create<AppState>()(
     },
     {
       name: "nexo-ui-v2",
-      version: 3,
+      version: 4,
       storage: createJSONStorage(() => localStorage),
+      // v3 guardaba "management" / "workshop" (Gestión / Taller).
+      migrate: (persisted, version) => {
+        const s = (persisted ?? {}) as { currentMode?: string; actingOperatorId?: string | null };
+        const mode = version < 4 ? (s.currentMode === "workshop" ? "operario" : "admin") : s.currentMode;
+        return { currentMode: mode as RoleKey, actingOperatorId: s.actingOperatorId ?? null } as Partial<AppState>;
+      },
       skipHydration: true,
       partialize: (s) => ({ currentMode: s.currentMode, actingOperatorId: s.actingOperatorId }),
     },

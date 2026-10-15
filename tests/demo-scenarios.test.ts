@@ -157,7 +157,7 @@ describe("estados y ejecución", () => {
       expect(() => ops.addActual(p, { type: "logistics", description: "x", date: today, amount: 100 }, S, ctx)).toThrow(/No se puede registrar/);
     }
   });
-  it("se avanza de a una etapa; sólo Gestión corrige hacia atrás y con confirmación", () => {
+  it("se avanza de a una etapa; sólo Administrativo corrige hacia atrás y con confirmación", () => {
     const { projects } = seed();
     const approved = projects.find((x) => x.id === "p-1051")!; // Aprobado
     expect(() => ops.changeStatus(approved, "production", ctx)).toThrow(/de a una/);
@@ -165,7 +165,7 @@ describe("estados y ejecución", () => {
     expect(purchasing.status).toBe("purchasing");
     expect(() => ops.changeStatus(purchasing, "approved", ctx)).toThrow(/corrección/);
     expect(ops.changeStatus(purchasing, "approved", ctx, { confirmBack: true }).status).toBe("approved");
-    expect(() => ops.changeStatus(purchasing, "production", { ...ctx, role: "operator" })).toThrow(/Gestión/);
+    expect(() => ops.changeStatus(purchasing, "production", { ...ctx, role: "operator" })).toThrow(/Administrativo/);
     expect(() => ops.changeStatus(purchasing, "completed", ctx)).toThrow(/Cerrar/);
   });
   it("al aprobar se congela el presupuesto original y no se pisa", () => {
@@ -173,10 +173,9 @@ describe("estados y ejecución", () => {
     const quotation = projects.find((x) => x.id === "p-1056")!;
     const approved = ops.changeStatus(quotation, "approved", ctx);
     expect(approved.baseline?.budgetTotal).toBe(projectEconomics(quotation).budgetTotal);
-    const edited = ops.addBudgetLine(approved, { category: "contingency", description: "extra", quantity: null, unit: "global", unitCost: 500_000 }, ctx);
-    expect(edited.baseline).toEqual(approved.baseline);
-    expect(projectEconomics(edited).budgetTotal).toBe(approved.baseline!.budgetTotal + 500_000);
-    const back = ops.changeStatus(ops.changeStatus(edited, "purchasing", ctx), "approved", ctx, { confirmBack: true });
+    // Desde Aprobado el costo presupuestado queda congelado (Lote 5A): solo se corrige con registro.
+    expect(() => ops.addBudgetLine(approved, { category: "contingency", description: "extra", quantity: null, unit: "global", unitCost: 500_000 }, ctx)).toThrow(/congelado/);
+    const back = ops.changeStatus(ops.changeStatus(approved, "purchasing", ctx), "approved", ctx, { confirmBack: true });
     expect(back.baseline).toEqual(approved.baseline);
   });
 });
@@ -207,8 +206,8 @@ describe("escenario 9 y 10 — cierre e historial", () => {
     expect(learnings.length).toBeGreaterThanOrEqual(3);
     expect(learnings[0].text).toMatch(/materiales terminaron/);
   });
-  it("presupuesto bloqueado en producción", () => {
+  it("costo presupuestado congelado en producción", () => {
     const { p } = seed();
-    expect(() => ops.addBudgetLine(p, { category: "contingency", description: "x", quantity: null, unit: "global", unitCost: 1 }, ctx)).toThrow(/bloqueado/);
+    expect(() => ops.addBudgetLine(p, { category: "contingency", description: "x", quantity: null, unit: "global", unitCost: 1 }, ctx)).toThrow(/congelado/);
   });
 });

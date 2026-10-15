@@ -1,5 +1,6 @@
-import type { Project, StockLot } from "@/types";
+import type { PriceRecord, Project, StockLot } from "@/types";
 import { MATERIAL_CATALOG } from "./constants";
+import { valueAt } from "./price-history";
 import { materialKey } from "./material-reconciliation";
 
 export interface MaterialOption {
@@ -40,4 +41,12 @@ export function suggestUnitCost(project: Pick<Project, "budgetLines">, lots: Sto
   const line = project.budgetLines.find((l) => l.category === "materials" && materialKey(l.materialId, l.description) === materialId && l.quantity !== null);
   if (line) return line.unitCost;
   return MATERIAL_CATALOG.find((m) => m.id === materialId)?.referenceCost ?? 0;
+}
+
+/**
+ * Precio de catálogo de un material vigente en una fecha (precios con vigencia, Lote 5A). Solo lo usan
+ * las cotizaciones nuevas: lo ya cotizado y lo comprado guardan su propio precio.
+ */
+export function catalogPriceAt(history: PriceRecord[], materialId: string, date: string): number {
+  return valueAt(history, "material_price", materialId, date, MATERIAL_CATALOG.find((m) => m.id === materialId)?.referenceCost ?? 0);
 }

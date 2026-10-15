@@ -113,7 +113,7 @@ describe("jornada de Configuración y plazo en días hábiles", () => {
   });
 
   it("valida la jornada entre 1 y 24 horas, y las tarifas mayores a cero", () => {
-    const ok = { overtimeMultiplier: 2, financialPct: 5, hoursPerDay: 9.5 };
+    const ok = { overtimeMultiplier: 2, financialPct: 5, hoursPerDay: 9.5, laborValuation: "operator" as const };
     expect(costSettingsError(ok)).toBeNull();
     expect(costSettingsError({ ...ok, hoursPerDay: 0.5 })).toMatch(/jornada/);
     expect(costSettingsError({ ...ok, hoursPerDay: 25 })).toMatch(/jornada/);

@@ -33,7 +33,7 @@ export function Footer() {
               <ul className="mt-3 space-y-2">
                 <li>
                   <Link href={DEMO_HREF} className="text-ink-soft hover:text-ink">
-                    Modo Gestión
+                    Modo Administrativo
                   </Link>
                 </li>
                 <li>

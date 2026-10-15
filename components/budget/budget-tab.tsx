@@ -11,6 +11,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { BudgetEditor, draftFromLine, draftToInput, type DraftLine } from "./budget-editor";
+import { useIdentity } from "@/store/selectors";
+import { CorrectionButton, CorrectionsList } from "@/components/projects/correction-dialog";
 
 export function BudgetTab({ project }: { project: Project }) {
   const editable = BUDGET_EDITABLE_STATUSES.includes(project.status);
@@ -19,6 +21,7 @@ export function BudgetTab({ project }: { project: Project }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
   const store = useAppStore();
+  const { isManager } = useIdentity();
   const total = budgetTotal(project.budgetLines);
   const byCat = budgetByCategory(project.budgetLines);
 
@@ -52,15 +55,17 @@ export function BudgetTab({ project }: { project: Project }) {
         <p className="text-sm text-slate-600">
           {editable ? null : <Lock className="mr-1.5 inline size-4 text-slate-400" aria-hidden />}
           {editable
-            ? "Costo presupuestado del proyecto. Se puede editar hasta que pase a Compras. Al aprobarlo se guarda una copia congelada: el presupuesto base."
-            : "Presupuesto base: es la línea base contra la que se miden los desvíos. Quedó bloqueado cuando el proyecto pasó a ejecución."}
+            ? "Costo presupuestado del proyecto. Se edita mientras está en Cotización: al aprobarlo queda congelado (el presupuesto base)."
+            : "Presupuesto base: es la línea base contra la que se miden los desvíos. Quedó congelado al aprobar el proyecto; un error se arregla con una corrección, que queda registrada."}
         </p>
         {editable && !editing && (
           <Button variant="outline" size="sm" onClick={start}>
             <Pencil /> Editar costo presupuestado
           </Button>
         )}
+        {!editable && isManager && <CorrectionButton project={project} />}
       </div>
+      <CorrectionsList projectId={project.id} />
 
       {editing ? (
         <Card>

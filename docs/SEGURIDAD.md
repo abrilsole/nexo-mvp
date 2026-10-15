@@ -1,4 +1,4 @@
-# Seguridad de Blerp (Lote 2)
+# Seguridad de Blerp (Lote 2, actualizado en el Lote 5A)
 
 **Estado:** 8 de octubre de 2026. Migraciones en `supabase/migrations/20261009120000_*` a `20261009120300_*`.
 
@@ -80,6 +80,44 @@ Migración `20261015120000_lote4c_jornada_y_demo.sql` (sin DROP):
   - la jornada queda en la línea de horas;
   - solo Gestión cambia `is_demo`.
 
+## Lote 5A: cuatro roles, usuarios y precios con vigencia
+
+Migración `20261016120000_lote5a_roles_usuarios_vigencia.sql` (sin DROP ni DELETE) y parte manual `supabase/manual/20261016120100_lote5a_manual.sql` (tiene DROP y DELETE: se corre a mano en el SQL Editor). Detalle completo en `docs/ROLES_Y_PERMISOS.md` y `docs/HISTORIAL_DE_PRECIOS.md`.
+
+| Quién | Acceso directo a tablas con importes | Cómo lee |
+|---|---|---|
+| **Administrativo** (antes Gestión: owner / member) | Sí, solo de su empresa y con la cuenta activa | Tablas (RLS) |
+| **Compras** (nuevo) | **Ninguno** | `compras_workspace()`: proyectos sin precio de venta ni rentabilidad, solo líneas de materiales, compras, stock y precios de materiales |
+| **Jefe de planta** (nuevo) | **Ninguno** | `planta_workspace()`: proyectos, operarios y horas **sin ningún importe** |
+| **Operario** (antes Taller) | **Ninguno** (igual que antes) | `taller_workspace()` y funciones `taller_*` |
+| Cuenta dada de baja (cualquier rol) | Ninguno | Nada: `organization_members.deactivated_at` corta todas las políticas y funciones |
+| Otra empresa | Ninguno | Nada |
+
+- **Usuarios:**
+  - `admin_members`, `admin_invite_member`, `admin_set_member_role`, `admin_set_member_active` y `admin_revoke_invitation` exigen un Administrativo activo.
+  - El trigger `guard_members` impide quedarse sin Administrativo y cambiarse el rol o darse de baja a uno mismo.
+- **Invitaciones:**
+  - La invitación queda en `member_invitations` (la lee solo Administrativo).
+  - El mail lo manda el servidor con la service role (`SUPABASE_SERVICE_ROLE_KEY`, nunca en el navegador).
+- **Precios con vigencia:**
+  - `price_history` la leen y escriben solo Administrativo, y solo crece (trigger).
+  - Compras recibe los precios de materiales por su función.
+- **Valores congelados:**
+  - Desde Aprobado no se edita el precio de venta ni el costo presupuestado.
+  - Se corrigen con `admin_correct_value`, que deja el registro en `value_corrections` (solo Administrativo, no se edita ni se borra).
+- **Horas:** `taller_log_hours` valúa cada hora con el costo vigente ese día (`private.labor_cost_at`).
+- **Tests:** `tests/db/lote5a.test.ts` (Postgres real con PGlite). Prueban:
+  - que la migración no cambia importes;
+  - invitación y roles;
+  - que nadie se cambia el rol a sí mismo y que no se puede quedar sin Administrativo;
+  - que Compras no lee precio de venta ni rentabilidad;
+  - que Jefe de planta no lee ningún importe;
+  - que el Operario sigue sin datos económicos;
+  - que una cuenta dada de baja no accede;
+  - que Administrativo accede a todo;
+  - que otra empresa no ve nada;
+  - el historial de precios y las correcciones.
+
 ## Cómo verificarlo
 
 ### 1. Tests automáticos (sin tocar la base real)
@@ -145,7 +183,12 @@ rollback;
 
 ## Pendientes y límites conocidos
 
-- **Archivos (Storage):** las políticas de Storage no se pueden modificar desde una migración (la tabla es de Supabase). La baja ya corta el acceso a los archivos. Un operario **activo** puede ver los archivos de toda su empresa, no solo los de sus proyectos. Para restringirlo: Supabase → Storage → Policies → editar "members read project files" y "members upload project files" con la condición de `20261009120000_seguridad_1_roles_y_politicas.sql` (comentario "Archivos").
+- **Archivos (Storage), sigue pendiente:**
+  - Las políticas de Storage no se pueden modificar desde una migración (la tabla es de Supabase). Siguen usando `private.is_org_member`.
+  - Desde el Lote 5A, esa función deja pasar a Administrativo, Operario activo y Jefe de planta, todos con la cuenta activa. **Compras no.**
+  - La baja de cualquier cuenta corta el acceso a los archivos.
+  - Límite que sigue: un Operario o un Jefe de planta activo ven los archivos de **toda** su empresa, no solo los de sus proyectos.
+  - Para restringirlo: Supabase → Storage → Policies → editar "members read project files" y "members upload project files" con la condición de `20261009120000_seguridad_1_roles_y_politicas.sql` (comentario "Archivos").
 - **Mientras `main` no tenga este lote:** en la app publicada, "Reset demo" y "Vaciar datos" van a fallar, porque el código viejo borra tabla por tabla y la base ahora lo impide. El resto de la app publicada sigue funcionando.
 - Los avisos automáticos de desvío en la Actividad ("Materiales superaron…") no se generan cuando carga un operario, porque Taller no conoce los costos. Las alertas se siguen calculando igual en Gestión.
 - El asesor de Supabase marca que las funciones `taller_*` se pueden llamar con un usuario logueado. Es a propósito: cada una valida adentro que sea un operario activo y asignado.
