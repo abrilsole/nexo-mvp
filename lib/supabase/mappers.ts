@@ -25,6 +25,7 @@ import type {
   StockLot,
   StockMovement,
   ValueCorrection,
+  WorkAssignment,
 } from "@/types";
 
 type Row = Record<string, unknown>;
@@ -108,6 +109,7 @@ const childToRow: { [K in ChildKey]: (org: string, projectId: string, item: Proj
     hour_type: l.hourType ?? null,
     overtime_multiplier: l.overtimeMultiplier ?? null,
     hours_per_day: l.hoursPerDay ?? null,
+    workers: l.workers ?? null,
   }),
   purchaseEntries: (org, projectId, e: PurchaseEntry, position) => ({
     organization_id: org,
@@ -163,6 +165,8 @@ const childToRow: { [K in ChildKey]: (org: string, projectId: string, item: Proj
     operator_id: a.operatorId ?? null,
     stage: a.stage ?? null,
     item_id: a.itemId ?? null,
+    rubro: a.rubro ?? null,
+    assignment_id: a.assignmentId ?? null,
     notes: a.notes ?? null,
     created_by: a.createdBy,
     created_at: a.createdAt,
@@ -239,6 +243,7 @@ function budgetLineFromRow(r: Row): BudgetLine {
     hourType: r.hour_type === "normal" || r.hour_type === "overtime" ? r.hour_type : undefined,
     overtimeMultiplier: r.overtime_multiplier === null || r.overtime_multiplier === undefined ? undefined : num(r.overtime_multiplier),
     hoursPerDay: r.hours_per_day === null || r.hours_per_day === undefined ? undefined : num(r.hours_per_day),
+    workers: r.workers === null || r.workers === undefined ? undefined : num(r.workers),
   };
 }
 
@@ -297,6 +302,8 @@ function actualFromRow(r: Row): ActualEntry {
     operatorId: opt(r.operator_id as string | null),
     stage: opt(r.stage as ActualEntry["stage"] | null),
     itemId: opt(r.item_id as string | null),
+    rubro: isRubroId(r.rubro) ? r.rubro : undefined,
+    assignmentId: opt(r.assignment_id as string | null | undefined),
     notes: opt(r.notes as string | null),
     createdBy: String(r.created_by),
     createdAt: iso(r.created_at),
@@ -674,4 +681,25 @@ export function hourRateFromRow(r: Row): HourRate {
 /** La categoría va en `kind` (Lote 4b). La columna vieja `category` quedó en desuso: no se escribe. */
 export function hourRateToRow(org: string, h: HourRate, position: number): Row {
   return { organization_id: org, id: h.id, name: h.name, hourly_rate: h.hourlyRate, kind: h.category, position, updated_at: new Date().toISOString() };
+}
+
+// ── Asignaciones (Lote 5B) ────────────────────────────────
+
+export function assignmentFromRow(r: Row): WorkAssignment {
+  return {
+    id: String(r.id),
+    projectId: String(r.project_id),
+    rubro: (isRubroId(r.rubro) ? r.rubro : "carpinteria_madera"),
+    operatorId: String(r.operator_id),
+    date: String(r.date),
+    plannedHours: num(r.planned_hours),
+    notes: opt(r.notes as string | null),
+    createdBy: String(r.created_by ?? ""),
+    createdAt: iso(r.created_at),
+  };
+}
+
+/** Argumento de planta_save_assignment (la base valida y completa quién la cargó). */
+export function assignmentToParams(a: Pick<WorkAssignment, "id" | "projectId" | "rubro" | "operatorId" | "date" | "plannedHours" | "notes">): Row {
+  return { id: a.id, project_id: a.projectId, rubro: a.rubro, operator_id: a.operatorId, date: a.date, planned_hours: a.plannedHours, notes: a.notes ?? null };
 }

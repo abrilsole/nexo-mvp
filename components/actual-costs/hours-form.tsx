@@ -1,26 +1,27 @@
 "use client";
 import { useMemo, useState } from "react";
-import type { Project, StageKey } from "@/types";
+import type { Project, RubroId, StageKey } from "@/types";
 import { STATUS_LABELS } from "@/lib/constants";
 import { EXECUTION_STATUSES, HOURS_MAX_PER_DAY, checkHours } from "@/lib/project-rules";
 import { parseDecimal } from "@/lib/schemas";
 import { formatCurrency, formatNumber, todayISO } from "@/lib/formatting";
 import { useAppStore } from "@/store/use-app-store";
 import { useIdentity } from "@/store/selectors";
+import { rubroOptions } from "@/lib/my-day";
+import { rubroLabel } from "@/lib/rubros";
 import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { QuantityInput } from "@/components/workshop/quantity-input";
 import { cn } from "@/lib/utils";
 
-export const WORK_TYPES = ["Corte", "Armado", "Laqueado / pintura", "Instalación", "Oficina técnica", "Otro"];
-
 /**
- * Carga de horas. El operario sale de la sesión (no se elige ni se escribe) y el costo/hora
- * viene de la tabla de operarios: ni Taller ni Gestión lo tipean.
+ * Carga de horas desde Administrativo (el Operario carga en "Mi día"). Las horas van por RUBRO del proyecto
+ * (Lote 5B). El costo/hora sale de la ficha del operario, vigente ese día: no se tipea.
  */
-export function HoursForm({ project, onDone, variant }: { project: Project; onDone: (summary: string) => void; variant: "workshop" | "management" }) {
-  const big = variant === "workshop";
+export function HoursForm({ project, onDone }: { project: Project; onDone: (summary: string) => void }) {
   const identity = useIdentity();
+  const hoursPerDay = useAppStore((s) => s.costSettings.hoursPerDay);
+  const rubros = rubroOptions(project);
   const operators = useAppStore((s) => s.operators);
   const logHours = useAppStore((s) => s.logHours);
   const assignOperators = useAppStore((s) => s.assignOperators);
@@ -35,7 +36,7 @@ export function HoursForm({ project, onDone, variant }: { project: Project; onDo
   const [pickedOperator, setPickedOperator] = useState(choices.find((o) => project.assignedOperatorIds.includes(o.id))?.id ?? "");
   const [date, setDate] = useState(todayISO());
   const [hours, setHours] = useState("");
-  const [workType, setWorkType] = useState("");
+  const [rubro, setRubro] = useState<RubroId | "">("");
   const [stage, setStage] = useState<StageKey>(EXECUTION_STATUSES.includes(project.status) ? (project.status as StageKey) : "production");
   const [itemId, setItemId] = useState("");
   const [comment, setComment] = useState("");
@@ -45,11 +46,11 @@ export function HoursForm({ project, onDone, variant }: { project: Project; onDo
   const isOperator = identity.role === "operator";
   const operator = isOperator ? identity.operator : operators.find((o) => o.id === pickedOperator);
   const hoursN = parseDecimal(hours || "0");
-  const check = operator && Number.isFinite(hoursN) && hoursN > 0 ? checkHours(project.actualEntries, operator.id, date, hoursN, todayISO()) : null;
+  const check = operator && Number.isFinite(hoursN) && hoursN > 0 ? checkHours(project.actualEntries, operator.id, date, hoursN, todayISO(), hoursPerDay) : null;
 
   const submit = () => {
     if (!operator) return setError(isOperator ? "Tu usuario no está vinculado a un operario." : "Elegí el operario.");
-    if (!workType) return setError("Elegí el tipo de trabajo.");
+    if (!rubro) return setError("Elegí el rubro.");
     if (!Number.isFinite(hoursN) || hoursN <= 0) return setError("Indicá las horas trabajadas.");
     if (check?.level === "block") return setError(check.message ?? "Horas inválidas.");
     if (check?.level === "warn" && !confirmHigh) return setError("Confirmá que las horas son correctas.");
@@ -62,18 +63,18 @@ export function HoursForm({ project, onDone, variant }: { project: Project; onDo
       operatorId: isOperator ? undefined : operator.id,
       date,
       hours: hoursN,
-      workType,
+      workType: rubroLabel(rubro),
+      rubro,
       stage,
       itemId: itemId || undefined,
       comment: comment.trim() || undefined,
       confirmHighHours: confirmHigh,
     });
     if (!res.ok) return setError(res.error);
-    onDone(`${formatNumber(hoursN, 1)} h de ${workType}${isOperator ? "" : ` · ${operator.name}`}`);
+    onDone(`${formatNumber(hoursN, 1)} h de ${rubroLabel(rubro)}${isOperator ? "" : ` · ${operator.name}`}`);
   };
 
-  const label = cn("mb-1.5 block font-medium text-slate-800", big ? "text-base" : "text-sm");
-  const field = cn(big && "h-12 text-base");
+  const label = "mb-1.5 block text-sm font-medium text-slate-800";
 
   if (isOperator && !identity.operator) {
     return (
@@ -92,7 +93,7 @@ export function HoursForm({ project, onDone, variant }: { project: Project; onDo
       ) : (
         <div>
           <label htmlFor="h-op" className={label}>Operario</label>
-          <Select id="h-op" value={pickedOperator} onChange={(e) => setPickedOperator(e.target.value)} className={field}>
+          <Select id="h-op" value={pickedOperator} onChange={(e) => setPickedOperator(e.target.value)}>
             <option value="">Elegí un operario…</option>
             {choices.map((o) => (
               <option key={o.id} value={o.id}>
@@ -104,37 +105,26 @@ export function HoursForm({ project, onDone, variant }: { project: Project; onDo
         </div>
       )}
 
-      <fieldset>
-        <legend className={label}>¿Qué tarea?</legend>
-        <div className="grid grid-cols-2 gap-2">
-          {WORK_TYPES.map((w) => (
-            <button
-              key={w}
-              type="button"
-              aria-pressed={workType === w}
-              onClick={() => setWorkType(w)}
-              className={cn(
-                "rounded-md border px-3 text-left",
-                big ? "min-h-12 text-base" : "min-h-10 text-sm",
-                workType === w ? "border-blue-600 bg-blue-50 font-medium ring-1 ring-blue-600" : "border-slate-300",
-              )}
-            >
-              {w}
-            </button>
+      <div>
+        <label htmlFor="h-rubro" className={label}>Rubro</label>
+        <Select id="h-rubro" value={rubro} onChange={(e) => setRubro(e.target.value as RubroId)}>
+          <option value="">Elegí el rubro…</option>
+          {rubros.map((r) => (
+            <option key={r} value={r}>{rubroLabel(r)}</option>
           ))}
-        </div>
-      </fieldset>
+        </Select>
+      </div>
 
       <QuantityInput id="h-hours" label="Horas" value={hours} onChange={setHours} unit="h" step={0.5} />
 
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label htmlFor="h-date" className={label}>Fecha</label>
-          <Input id="h-date" type="date" max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} className={field} />
+          <Input id="h-date" type="date" max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
         <div>
           <label htmlFor="h-stage" className={label}>Etapa</label>
-          <Select id="h-stage" value={stage} onChange={(e) => setStage(e.target.value as StageKey)} className={field}>
+          <Select id="h-stage" value={stage} onChange={(e) => setStage(e.target.value as StageKey)}>
             {EXECUTION_STATUSES.map((s) => (
               <option key={s} value={s}>{STATUS_LABELS[s]}</option>
             ))}
@@ -147,7 +137,7 @@ export function HoursForm({ project, onDone, variant }: { project: Project; onDo
           <label htmlFor="h-item" className={label}>
             ¿Para qué mueble? <span className="font-normal text-slate-500">(opcional)</span>
           </label>
-          <Select id="h-item" value={itemId} onChange={(e) => setItemId(e.target.value)} className={field}>
+          <Select id="h-item" value={itemId} onChange={(e) => setItemId(e.target.value)}>
             <option value="">General del proyecto</option>
             {project.items.map((i) => (
               <option key={i.id} value={i.id}>{i.name}</option>
@@ -160,7 +150,7 @@ export function HoursForm({ project, onDone, variant }: { project: Project; onDo
         <label htmlFor="h-comment" className={label}>
           Comentario <span className="font-normal text-slate-500">(opcional)</span>
         </label>
-        <Textarea id="h-comment" rows={2} value={comment} onChange={(e) => setComment(e.target.value)} className={cn(big && "text-base")} />
+        <Textarea id="h-comment" rows={2} value={comment} onChange={(e) => setComment(e.target.value)} />
       </div>
 
       {check && check.level !== "ok" && (
@@ -175,7 +165,7 @@ export function HoursForm({ project, onDone, variant }: { project: Project; onDo
         </div>
       )}
 
-      {!big && operator && hoursN > 0 && (
+      {operator && hoursN > 0 && (
         <div className="rounded-md bg-slate-50 p-3 text-sm">
           Costo: <strong className="tabular">{formatCurrency(hoursN * operator.hourlyCost)}</strong>
           <span className="text-slate-500"> ({formatNumber(hoursN, 1)} h × {formatCurrency(operator.hourlyCost)} de la ficha de {operator.name})</span>
@@ -188,7 +178,7 @@ export function HoursForm({ project, onDone, variant }: { project: Project; onDo
           {error}
         </p>
       )}
-      <Button size={big ? "xl" : "default"} className="w-full" onClick={submit}>
+      <Button className="w-full" onClick={submit}>
         Guardar horas
       </Button>
     </div>

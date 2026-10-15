@@ -25,6 +25,7 @@ import type {
   StageLog,
   StockLot,
   UnitCostOrigin,
+  RubroId,
 } from "@/types";
 import {
   ACTUAL_TYPE_LABELS,
@@ -100,6 +101,8 @@ export interface BudgetLineInput {
   hourType?: BudgetLine["hourType"];
   hoursPerDay?: number;
   overtimeMultiplier?: number;
+  /** Mano de obra: operarios que pidió el Cotizador (Lote 5B). */
+  workers?: number;
 }
 
 export function makeBudgetLine(input: BudgetLineInput): BudgetLine {
@@ -477,7 +480,13 @@ export interface HoursInput {
   stage?: StageKey;
   itemId?: string;
   comment?: string;
-  /** Confirma una carga alta (más de 16 h en el día). */
+  /** Rubro del proyecto en el que trabajó (Lote 5B: las horas se cargan por rubro). */
+  rubro?: RubroId;
+  /** Asignación del Jefe de planta que se confirma o corrige. */
+  assignmentId?: string;
+  /** Jornada de Configuración: por encima se pide confirmar (aviso, no bloqueo). */
+  workdayHours?: number;
+  /** Confirma una carga por encima de la jornada. */
   confirmHighHours?: boolean;
 }
 
@@ -510,7 +519,7 @@ export function logHours(
   if (input.itemId && !project.items.some((i) => i.id === input.itemId)) {
     throw new DomainError("El mueble elegido no existe en este proyecto.");
   }
-  const check = checkHours(project.actualEntries, op.id, input.date, input.hours, todayISO());
+  const check = checkHours(project.actualEntries, op.id, input.date, input.hours, todayISO(), input.workdayHours);
   if (check.level === "block") throw new RuleError(check.message ?? "Horas inválidas.");
   if (check.level === "warn" && !input.confirmHighHours) throw new RuleError(`${check.message} Confirmá para guardarlas.`);
 
@@ -527,6 +536,8 @@ export function logHours(
     operatorId: op.id,
     stage: input.stage ?? (project.status as StageKey),
     itemId: input.itemId,
+    rubro: input.rubro,
+    assignmentId: input.assignmentId,
     notes: input.comment,
     createdBy: ctx.actor,
     createdAt: ctx.now,

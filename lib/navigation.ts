@@ -20,7 +20,9 @@ export const SECTION_LABELS: Record<string, string> = {
   settings: "Configuración",
   materials: "Materiales",
   compras: "Materiales por proyecto",
-  planta: "Operarios y proyectos",
+  planta: "Planta",
+  horas: "Horas",
+  taller: "Mi día",
 };
 
 /**

@@ -30,12 +30,12 @@ Blerp pasó de dos experiencias (Gestión y Taller) a **cuatro roles**. Este lot
 | Usuarios y Configuración | Sí | **No** | **No** | **No** |
 | Corregir valores congelados | Sí | **No** | **No** | **No** |
 
-**Menú de cada rol** (el mismo mapa arma el menú y los guards de ruta):
+**Menú de cada rol** (el mismo mapa arma el menú y los guards de ruta; desde el Lote 5B no hay ítems "Próximamente": lo que no está hecho no se muestra):
 
-- **Administrativo:** Dashboard, Proyectos, Alertas, Cotizador, Historial, Stock, Operarios, Configuración (con la pestaña Usuarios).
-- **Compras:** Materiales por proyecto. Marcados "Próximamente", sin función detrás: Stock, Proveedores, Precios de compra, Cotizador, Historial.
-- **Jefe de planta:** Operarios y proyectos. Marcados "Próximamente": Horas, Capacidad, Asignaciones.
-- **Operario:** Mi día (sus proyectos asignados y la carga de horas), igual que el Taller de antes.
+- **Administrativo:** Dashboard, Proyectos, Alertas, Horas, Cotizador, Historial, Stock, Operarios, Configuración (con la pestaña Usuarios).
+- **Compras:** Materiales por proyecto (el resto llega en el Lote 5C).
+- **Jefe de planta:** Resumen, Proyectos, Operarios, Asignaciones, Alertas (ver `docs/PLANTA_Y_HORAS.md`).
+- **Operario:** Mi día (sus asignaciones del día, carga de horas por rubro y "Otras cargas").
 
 ## Cómo se hace cumplir
 

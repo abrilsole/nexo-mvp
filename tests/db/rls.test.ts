@@ -52,6 +52,7 @@ beforeAll(async () => {
     operators: s.operators,
     stock: s.stock,
     requests: [],
+    assignments: [],
     settings: { ...DEFAULT_SETTINGS },
     resolvedAlertIds: [],
   });
@@ -550,10 +551,12 @@ describe("Lote 4c · jornada del operario y empresa demo", () => {
     expect(await errorAs(db, laura, (tx) => tx.query("update cost_settings set hours_per_day = 30 where organization_id = $1", [org]))).toMatch(/check/);
   });
 
-  it("Taller no ve la jornada ni la recibe en taller_workspace", async () => {
+  it("Taller no lee cost_settings; desde el Lote 5B recibe solo su jornada (para avisar si se pasa), nada de costos", async () => {
     expect(await rows(juan, "select hours_per_day from cost_settings")).toHaveLength(0);
     const [{ ws }] = await rows(juan, "select taller_workspace() as ws");
-    expect(JSON.stringify(ws)).not.toContain("hours_per_day");
+    const text = JSON.stringify(ws);
+    expect(text).toContain("hours_per_day");
+    for (const k of ["overtime_multiplier", "financial_pct", "hourly_rate", "labor_valuation"]) expect(text).not.toContain(k);
   });
 
   it("la jornada usada queda en la línea de horas", async () => {

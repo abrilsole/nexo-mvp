@@ -21,6 +21,7 @@ import type {
   ProjectStatus,
   StockLot,
   ValueCorrection,
+  WorkAssignment,
 } from "@/types";
 import { DEFAULT_HOUR_RATES, DEFAULT_SETTINGS, DEMO_USERS } from "@/lib/constants";
 import { roleKeyOf, type RoleKey } from "@/lib/permissions";
@@ -40,6 +41,7 @@ import { tallerCalls } from "@/lib/supabase/taller";
 import { todayISO } from "@/lib/formatting";
 import { hourRatesAt, laborCostAt, OVERTIME_SUBJECT, priceChange, priceChangeError, valueAt } from "@/lib/price-history";
 import { applyCorrection, correctionError, type CorrectionInput } from "@/lib/corrections";
+import { assignmentError, type AssignmentInput } from "@/lib/plant";
 
 export type Result<T = undefined> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -47,6 +49,8 @@ export type SyncStatus = "idle" | "saving" | "error";
 
 interface AppState {
   projects: Project[];
+  /** Asignaciones del Jefe de planta (Lote 5B). */
+  assignments: WorkAssignment[];
   operators: Operator[];
   stock: StockState;
   requests: MaterialRequest[];
@@ -158,6 +162,10 @@ interface AppState {
   saveHourRates: (rates: HourRate[], validFrom?: string) => Result;
   /** Precios de catálogo de materiales con "vigente desde". Solo afectan cotizaciones nuevas. */
   setMaterialPrices: (prices: Array<{ materialId: string; value: number; previousValue: number }>, validFrom: string) => Result;
+  /** Crea (sin id) o modifica una asignación. La hacen el Jefe de planta y Administrativo. */
+  saveAssignment: (input: AssignmentInput & { id?: string }) => Result<string>;
+  /** Quita una asignación. */
+  removeAssignment: (id: string) => Result;
   /** Corrige un valor congelado (proyecto aprobado o cerrado) con motivo: queda registrado. */
   correctValue: (projectId: string, input: CorrectionInput) => Promise<Result>;
   /** Reemplaza los datos de la empresa por la demo de Madera Sur. */
@@ -175,6 +183,7 @@ export function demoData(): WorkspaceData {
   const seed = buildSeed(new Date());
   return {
     projects: seed.projects,
+    assignments: seed.assignments,
     operators: seed.operators,
     stock: seed.stock,
     requests: [],
@@ -185,6 +194,7 @@ export function demoData(): WorkspaceData {
 
 const EMPTY_DATA: WorkspaceData = {
   projects: [],
+  assignments: [],
   operators: [],
   stock: EMPTY_STOCK,
   requests: [],
@@ -211,7 +221,8 @@ export function effectiveIdentity(
   const real = roleKeyOf(s.role);
   const view = real === "admin" && s.isDemo ? s.currentMode : real;
   if (view === "operario") {
-    const operator = s.operators.find((o) => o.id === s.actingOperatorId && o.active);
+    // En la demo siempre hay un operario elegido: el que se eligió o, si no, el primero activo.
+    const operator = s.operators.find((o) => o.id === s.actingOperatorId && o.active) ?? s.operators.find((o) => o.active);
     return { role: "operator", roleKey: "operario", operator, actor: operator?.name ?? s.userName };
   }
   if (view === "compras" || view === "jefe_planta") {
@@ -366,6 +377,7 @@ export const useAppStore = create<AppState>()(
         loadWorkspace: (ws) => {
           set({
             projects: ws.projects,
+            assignments: ws.assignments,
             operators: ws.operators,
             stock: ws.stock,
             requests: ws.requests,
@@ -391,7 +403,12 @@ export const useAppStore = create<AppState>()(
           if (ws.stockMigrated) void persistRemote((db, org) => remote.syncStock(db, org, EMPTY_STOCK, ws.stock));
         },
 
-        setMode: (mode) => set({ currentMode: mode }),
+        setMode: (mode) => {
+          // Como Operario, la demo arranca con el primer operario activo (nunca "elegí un operario").
+          const { operators, actingOperatorId } = get();
+          const valid = operators.some((o) => o.id === actingOperatorId && o.active);
+          set({ currentMode: mode, actingOperatorId: valid ? actingOperatorId : (operators.find((o) => o.active)?.id ?? null) });
+        },
         setActingOperator: (id) => set({ actingOperatorId: id }),
 
         createProject: (input) =>
@@ -456,7 +473,7 @@ export const useAppStore = create<AppState>()(
             const laborRate = hourRates.find((r) => r.id === "labor")?.hourlyRate;
             // La hora se valúa con el costo vigente ESE día (precios con vigencia).
             const costAt = (op: Operator, date: string) => laborCostAt({ valuation: costSettings.laborValuation, operator: op, laborRate, history: priceHistory, date });
-            return ops.logHours(p, get().operators, input, get().settings, ctx(), costAt);
+            return ops.logHours(p, get().operators, { ...input, workdayHours: costSettings.hoursPerDay }, get().settings, ctx(), costAt);
           }),
 
         addActualEntry: (id, input) => mutate(id, (p) => ops.addActual(p, input, get().settings, ctx())),
@@ -653,6 +670,42 @@ export const useAppStore = create<AppState>()(
           addHistory(prices.flatMap((p) => changeOf("material_price", p.materialId, p.value, p.previousValue, validFrom)));
           return { ok: true, value: undefined };
         },
+        saveAssignment: (input) =>
+          run(() => {
+            const who = effectiveIdentity(get()).roleKey;
+            if (who !== "admin" && who !== "jefe_planta") throw new ops.DomainError("Las asignaciones las hace el Jefe de planta.");
+            const { projects, operators, assignments } = get();
+            const error = assignmentError(input, { projects, operators });
+            if (error) throw new ops.DomainError(error);
+            const previous = input.id ? assignments.find((a) => a.id === input.id) : undefined;
+            const a: WorkAssignment = {
+              id: input.id ?? createId("asg"),
+              projectId: input.projectId,
+              rubro: input.rubro,
+              operatorId: input.operatorId,
+              date: input.date,
+              plannedHours: input.plannedHours,
+              createdBy: previous?.createdBy ?? effectiveIdentity(get()).actor,
+              createdAt: previous?.createdAt ?? new Date().toISOString(),
+            };
+            // El operario pasa al equipo del proyecto (la base hace lo mismo): así lo ve en "Mi día".
+            set({
+              assignments: previous ? assignments.map((x) => (x.id === a.id ? a : x)) : [...assignments, a],
+              projects: projects.map((p) =>
+                p.id === a.projectId && !p.assignedOperatorIds.includes(a.operatorId) ? { ...p, assignedOperatorIds: [...p.assignedOperatorIds, a.operatorId] } : p,
+              ),
+            });
+            void persistRemote((db) => remote.saveAssignment(db, a));
+            return a.id;
+          }),
+        removeAssignment: (id) =>
+          run(() => {
+            const who = effectiveIdentity(get()).roleKey;
+            if (who !== "admin" && who !== "jefe_planta") throw new ops.DomainError("Las asignaciones las hace el Jefe de planta.");
+            set({ assignments: get().assignments.filter((a) => a.id !== id) });
+            void persistRemote((db) => remote.removeAssignment(db, id));
+            return undefined;
+          }),
         correctValue: async (projectId, input) => {
           const project = get().projects.find((p) => p.id === projectId);
           if (!project) return { ok: false, error: "Proyecto no encontrado." };

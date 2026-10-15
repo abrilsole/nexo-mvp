@@ -229,6 +229,7 @@ export function rubroLines(r: QuoteRubro, labor: RubroLabor | null, { rates, ove
       hourRateId: rates.labor?.id,
       hourType: "normal",
       hoursPerDay,
+      workers: labor.workers,
       notes: rateNote(rates.labor),
     });
   }
@@ -245,6 +246,7 @@ export function rubroLines(r: QuoteRubro, labor: RubroLabor | null, { rates, ove
       hourType: "overtime",
       overtimeMultiplier: multiplier,
       hoursPerDay,
+      workers: labor.workers,
       notes: `Tarifa ${num(labor.rate)} × ${num(multiplier)}.`,
     });
   }

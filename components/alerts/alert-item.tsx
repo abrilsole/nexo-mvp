@@ -9,7 +9,20 @@ import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/store/use-app-store";
 import { cn } from "@/lib/utils";
 
-export function AlertItem({ alert, resolved = false, showProject = true, compact = false }: { alert: Alert; resolved?: boolean; showProject?: boolean; compact?: boolean }) {
+/** `readOnly`: sin "Marcar resuelta" ni link al proyecto (Jefe de planta: no ve la pantalla del proyecto con importes). */
+export function AlertItem({
+  alert,
+  resolved = false,
+  showProject = true,
+  compact = false,
+  readOnly = false,
+}: {
+  alert: Alert;
+  resolved?: boolean;
+  showProject?: boolean;
+  compact?: boolean;
+  readOnly?: boolean;
+}) {
   const resolveAlert = useAppStore((s) => s.resolveAlert);
   const reopenAlert = useAppStore((s) => s.reopenAlert);
   const border = alert.level === "critical" ? "border-l-red-500" : alert.level === "warning" ? "border-l-amber-500" : "border-l-blue-400";
@@ -27,6 +40,16 @@ export function AlertItem({ alert, resolved = false, showProject = true, compact
           </div>
           <p className="font-medium text-slate-900">{alert.title}</p>
           <p className="text-sm text-slate-600">{alert.message}</p>
+          {alert.records && alert.records.length > 0 && (
+            <details className="text-xs text-slate-600">
+              <summary className="cursor-pointer text-blue-700 hover:underline">De dónde sale ({alert.records.length})</summary>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {alert.records.map((r) => (
+                  <li key={r} className="break-words">{r}</li>
+                ))}
+              </ul>
+            </details>
+          )}
           {!compact && alert.impactAmount !== undefined && alert.impactAmount > 0 && (
             <p className="text-sm text-slate-600">
               Impacto: <strong className="tabular text-red-700">{formatSignedCurrency(alert.impactAmount)}</strong>
@@ -37,6 +60,7 @@ export function AlertItem({ alert, resolved = false, showProject = true, compact
           {!compact && alert.expectedMargin !== undefined && alert.projectedMargin !== undefined && (
             <MarginShift from={alert.expectedMargin} to={alert.projectedMargin} />
           )}
+          {!readOnly && (
           <div className="flex gap-2">
             {resolved ? (
               <Button variant="ghost" size="sm" onClick={() => reopenAlert(alert.resolutionKey)}>
@@ -55,6 +79,7 @@ export function AlertItem({ alert, resolved = false, showProject = true, compact
               </Button>
             )}
           </div>
+          )}
         </div>
       </div>
     </div>

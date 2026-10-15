@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────
 import type { ActualEntry, AppRole, Project, ProjectStatus } from "@/types";
 import { STATUS_LABELS, STATUS_ORDER } from "./constants";
-import { daysBetween } from "./formatting";
+import { daysBetween, formatNumber } from "./formatting";
 
 export class RuleError extends Error {}
 
@@ -117,7 +117,7 @@ export function projectSchedule(project: Pick<Project, "startDate" | "dueDate">,
 
 // ── Horas ─────────────────────────────────────────────────────
 
-/** Por encima se pide revisar; por encima del tope diario se bloquea. */
+/** Por encima se pide revisar (si no se indica la jornada); por encima del tope diario se bloquea. */
 export const HOURS_WARN_PER_DAY = 16;
 export const HOURS_MAX_PER_DAY = 24;
 
@@ -134,8 +134,10 @@ export function checkHours(
   date: string,
   hours: number,
   today: string,
+  /** Por encima se avisa (no se bloquea): la jornada de Configuración (Lote 5B). */
+  warnAbove: number = HOURS_WARN_PER_DAY,
 ): HoursCheck {
-  if (!(hours > 0)) return { level: "block", dayTotal: 0, message: "Indicá las horas trabajadas." };
+  if (!(hours > 0)) return { level: "block", dayTotal: 0, message: "Las horas tienen que ser más que 0." };
   if (date > today) return { level: "block", dayTotal: hours, message: "No se pueden cargar horas de una fecha futura." };
   const prior = entries
     .filter((e) => e.type === "labor" && e.operatorId === operatorId && e.date === date)
@@ -145,14 +147,14 @@ export function checkHours(
     return {
       level: "block",
       dayTotal,
-      message: `Ese día ya hay ${prior} h cargadas: con estas serían ${dayTotal} h y un día tiene ${HOURS_MAX_PER_DAY}. Corregí las horas.`,
+      message: `Ese día ya hay ${formatNumber(prior)} h cargadas: con estas serían ${formatNumber(dayTotal)} h y un día tiene ${HOURS_MAX_PER_DAY}. Corregí las horas.`,
     };
   }
-  if (dayTotal > HOURS_WARN_PER_DAY) {
+  if (dayTotal > warnAbove) {
     return {
       level: "warn",
       dayTotal,
-      message: `Ese día quedarían ${dayTotal} h cargadas (más de ${HOURS_WARN_PER_DAY}). Revisá que sea correcto.`,
+      message: `Ese día quedarían ${formatNumber(dayTotal)} h cargadas, más que la jornada de ${formatNumber(warnAbove)} h. Revisá que sea correcto.`,
     };
   }
   return { level: "ok", dayTotal };
