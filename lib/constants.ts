@@ -174,6 +174,8 @@ export const MATERIAL_CATALOG: CatalogMaterial[] = [
   { id: "corredera", name: "Corredera", unit: "par", referenceCost: 12500, rubro: "herrajes" },
   { id: "tapacanto", name: "Tapacanto", unit: "m", referenceCost: 1000, rubro: "carpinteria_madera" },
   { id: "fenolico", name: "Fenólico", unit: "placa", referenceCost: 70000, rubro: "carpinteria_madera" },
+  { id: "multilaminado-18", name: "Multilaminado 18 mm", unit: "placa", referenceCost: 95000, rubro: "carpinteria_madera" },
+  { id: "cano-40", name: "Caño estructural 40×40", unit: "m", referenceCost: 9000, rubro: "carpinteria_metalica" },
 ];
 
 export const OTHER_MATERIAL_ID = "__other__";

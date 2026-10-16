@@ -112,7 +112,7 @@ export function ProjectDetail({ id, tab: initialTab, purchase }: { id: string; t
           <TabsTrigger value="materials">Materiales</TabsTrigger>
           <TabsTrigger value="costs">Costos reales</TabsTrigger>
           <TabsTrigger value="stages">Etapas</TabsTrigger>
-          <TabsTrigger value="items">Muebles y archivos</TabsTrigger>
+          <TabsTrigger value="items">Productos y archivos</TabsTrigger>
           <TabsTrigger value="activity">Actividad</TabsTrigger>
         </TabsList>
 

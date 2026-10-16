@@ -21,6 +21,7 @@ import type {
   PurchaseLineStatus,
   LineStatus,
   ProjectStatus,
+  RubroId,
   StockLot,
   ValueCorrection,
   WorkAssignment,
@@ -32,7 +33,8 @@ import { buildSeed } from "@/lib/seed-data";
 import * as ops from "@/lib/project-operations";
 import * as people from "@/lib/operators";
 import { createId } from "@/lib/activity";
-import { isBuyer, isManager } from "@/lib/project-rules";
+import { checkHours, isBuyer, isManager } from "@/lib/project-rules";
+import type { ProductInput } from "@/lib/production";
 import { EMPTY_STOCK, applyChange, receiveStock, type StockState } from "@/lib/stock";
 import { materialKey } from "@/lib/material-reconciliation";
 import { createClient } from "@/lib/supabase/client";
@@ -106,11 +108,20 @@ interface AppState {
 
   addPurchaseEntry: (id: string, input: ops.PurchaseInput) => Result;
   registerUsage: (id: string, input: ops.MaterialUsageInput) => Result;
+  /** Horas contra una asignación (el Operario, en "Mi día"). */
   logHours: (id: string, input: ops.HoursInput) => Result;
+  /**
+   * Carga manual del Administrativo: crea la asignación (producto + rubro + operario + día, con esas horas previstas)
+   * y carga las horas contra ella. Así toda hora tiene su asignación.
+   */
+  logHoursManual: (id: string, input: ManualHoursInput) => Result;
   addActualEntry: (id: string, input: ops.ActualInput) => Result;
 
   assignOperators: (id: string, operatorIds: string[]) => Result;
-  addItem: (id: string, input: { name: string; description?: string; quantity: number }) => Result;
+  addItem: (id: string, input: ProductInput) => Result;
+  updateItem: (id: string, itemId: string, input: ProductInput) => Result;
+  /** Unidades terminadas de un producto: las carga el Jefe de planta (o un Administrativo). */
+  setCompletedUnits: (projectId: string, itemId: string, units: number) => Result;
   removeItem: (id: string, itemId: string) => Result;
   addStageLog: (id: string, input: ops.StageLogInput) => Result;
   addAttachment: (id: string, attachment: Attachment) => Result;
@@ -188,6 +199,16 @@ interface AppState {
 
 function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : "Ocurrió un error inesperado.";
+}
+
+export interface ManualHoursInput {
+  operatorId: string;
+  itemId: string;
+  rubro: RubroId;
+  date: string;
+  hours: number;
+  comment?: string;
+  confirmHighHours?: boolean;
 }
 
 export function demoData(): WorkspaceData {
@@ -512,13 +533,42 @@ export const useAppStore = create<AppState>()(
             const laborRate = hourRates.find((r) => r.id === "labor")?.hourlyRate;
             // La hora se valúa con el costo vigente ESE día (precios con vigencia).
             const costAt = (op: Operator, date: string) => laborCostAt({ valuation: costSettings.laborValuation, operator: op, laborRate, history: priceHistory, date });
-            return ops.logHours(p, get().operators, { ...input, workdayHours: costSettings.hoursPerDay }, get().settings, ctx(), costAt);
+            return ops.logHours(p, get().operators, get().assignments, { ...input, workdayHours: costSettings.hoursPerDay }, get().settings, ctx(), costAt);
           }),
+
+        logHoursManual: (id, input) => {
+          if (!isManager(effectiveIdentity(get()).role)) return { ok: false, error: "La carga manual de horas la hace un usuario Administrativo." };
+          const check = checkHours(find(id).actualEntries, input.operatorId, input.date, input.hours, todayISO(), get().costSettings.hoursPerDay);
+          if (check.level === "block") return { ok: false, error: check.message ?? "Horas inválidas." };
+          if (check.level === "warn" && !input.confirmHighHours) return { ok: false, error: `${check.message} Confirmá para guardarlas.` };
+          const saved = get().saveAssignment({ projectId: id, itemId: input.itemId, rubro: input.rubro, operatorId: input.operatorId, date: input.date, plannedHours: input.hours });
+          if (!saved.ok) return saved;
+          return get().logHours(id, { assignmentId: saved.value, hours: input.hours, comment: input.comment, confirmHighHours: input.confirmHighHours });
+        },
 
         addActualEntry: (id, input) => mutate(id, (p) => ops.addActual(p, input, get().settings, ctx())),
 
         assignOperators: (id, operatorIds) => mutate(id, (p) => ops.assignOperators(p, operatorIds, get().operators, ctx())),
         addItem: (id, input) => mutate(id, (p) => ops.addItem(p, input, ctx())),
+        updateItem: (id, itemId, input) => mutate(id, (p) => ops.updateItem(p, itemId, input, ctx())),
+        setCompletedUnits: (projectId, itemId, units) =>
+          run(() => {
+            const who = effectiveIdentity(get()).roleKey;
+            if (who !== "admin" && who !== "jefe_planta") throw new ops.DomainError("Las unidades terminadas las carga el Jefe de planta.");
+            const project = find(projectId);
+            const item = project.items.find((i) => i.id === itemId);
+            if (!item) throw new ops.DomainError("Producto no encontrado.");
+            if (!Number.isInteger(units) || units < 0 || units > item.quantity) throw new ops.DomainError(`Las unidades terminadas van de 0 a ${item.quantity}.`);
+            const now = new Date().toISOString();
+            // Ya se guarda con la función de planta: se actualiza la memoria sin volver a escribir el proyecto.
+            set({
+              projects: get().projects.map((p) =>
+                p.id === projectId ? { ...p, updatedAt: now, items: p.items.map((i) => (i.id === itemId ? { ...i, completedUnits: units } : i)) } : p,
+              ),
+            });
+            void persistRemote((db) => remote.setCompletedUnits(db, projectId, itemId, units));
+            return undefined;
+          }),
         removeItem: (id, itemId) => mutate(id, (p) => ops.removeItem(p, itemId, ctx())),
         addStageLog: (id, input) => mutate(id, (p) => ops.addStageLog(p, input, ctx()).project),
         addAttachment: (id, attachment) => mutate(id, (p) => ops.addAttachment(p, attachment, ctx())),
@@ -722,6 +772,7 @@ export const useAppStore = create<AppState>()(
             const a: WorkAssignment = {
               id: input.id ?? createId("asg"),
               projectId: input.projectId,
+              itemId: input.itemId,
               rubro: input.rubro,
               operatorId: input.operatorId,
               date: input.date,

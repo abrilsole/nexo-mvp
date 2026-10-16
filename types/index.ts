@@ -248,6 +248,8 @@ export interface ActualEntry {
 export interface WorkAssignment {
   id: string;
   projectId: string;
+  /** Producto del proyecto (Lote 6). Solo las asignaciones anteriores pueden no tenerlo. */
+  itemId?: string;
   rubro: RubroId;
   operatorId: string;
   /** yyyy-mm-dd */
@@ -313,12 +315,27 @@ export interface Project {
   baseline?: ProjectBaseline;
 }
 
+/** Rubro que necesita un producto (Lote 6): horas estimadas para toda la cantidad y operarios que pide (sin nombre). */
+export interface ProductRubro {
+  rubro: RubroId;
+  hours: number;
+  workers: number;
+}
+
+/** Producto del proyecto (ej. "Mesa × 10"). Antes "mueble": es el mismo registro (project_items). */
 export interface ProjectItem {
   id: string;
   name: string;
   description?: string;
   quantity: number;
+  /** Rubros que necesita, con horas estimadas y operarios pedidos (los define el Administrativo). */
+  rubros: ProductRubro[];
+  /** Unidades terminadas: las carga SOLO el Jefe de planta (o un Administrativo). */
+  completedUnits: number;
 }
+
+/** Estado de un producto (y, derivado de sus productos, el de producción del proyecto). */
+export type ProductionStatus = "pending" | "in_production" | "done";
 
 export interface ProjectBaseline {
   capturedAt: string;

@@ -12,7 +12,7 @@ import { projectHoldings, type StockState } from "@/lib/stock";
 import * as ops from "@/lib/project-operations";
 import { workspacePayload } from "@/lib/supabase/workspace";
 import { tallerCalls } from "@/lib/supabase/taller";
-import { asUser, createDb, errorAs, signUp } from "./harness";
+import { asUser, assignFor, createDb, errorAs, signUp } from "./harness";
 
 let db: PGlite;
 let org = "";
@@ -190,22 +190,21 @@ describe("Operario activo (Juan)", () => {
     expect(text).not.toContain("15000");
   });
   it("carga sus horas y el costo lo calcula el servidor", async () => {
-    await asUser(db, juan, (tx) =>
-      tx.query("select taller_log_hours($1::jsonb)", [
-        JSON.stringify({ id: "h-juan-1", project_id: MAIN_DEMO_PROJECT_ID, date: daysAgo(2), hours: 3, work_type: "Armado" }),
-      ]),
-    );
+    const assignment = await assignFor(db, laura, "op-juan", daysAgo(2));
+    await asUser(db, juan, (tx) => tx.query("select taller_log_hours($1::jsonb)", [JSON.stringify({ id: "h-juan-1", assignment_id: assignment, hours: 3, work_type: "Armado" })]));
     const [e] = (await db.query<{ amount: string; labor: { hourlyCost: number } }>("select amount, labor from actual_entries where id = 'h-juan-1'")).rows;
     expect(Number(e.amount)).toBe(45_000);
     expect(e.labor.hourlyCost).toBe(15_000);
   });
-  it("no carga en proyectos donde no está asignado", async () => {
+  it("solo carga horas contra una asignación suya (no hay horas sueltas ni en proyectos ajenos)", async () => {
     const other = seed.projects.find((p) => p.status === "quotation")!;
     expect(
       await errorAs(db, juan, (tx) =>
         tx.query("select taller_log_hours($1::jsonb)", [JSON.stringify({ project_id: other.id, date: daysAgo(2), hours: 1, work_type: "Armado" })]),
       ),
-    ).toMatch(/No estás asignado/);
+    ).toMatch(/no es tuya/);
+    const diegos = await assignFor(db, laura, "op-diego", daysAgo(3));
+    expect(await errorAs(db, juan, (tx) => tx.query("select taller_log_hours($1::jsonb)", [JSON.stringify({ assignment_id: diegos, hours: 1 })]))).toMatch(/no es tuya/);
   });
   it("registra consumo: el costo sale del lote, no del navegador", async () => {
     const project = seed.projects.find((p) => p.id === MAIN_DEMO_PROJECT_ID)!;
@@ -295,7 +294,7 @@ describe("Operario dado de baja (Diego)", () => {
     expect(await rows(diego, "select name from storage.objects")).toHaveLength(0);
     expect(
       await errorAs(db, diego, (tx) =>
-        tx.query("select taller_log_hours($1::jsonb)", [JSON.stringify({ project_id: MAIN_DEMO_PROJECT_ID, date: daysAgo(1), hours: 1, work_type: "Armado" })]),
+        tx.query("select taller_log_hours($1::jsonb)", [JSON.stringify({ assignment_id: "asg-op-diego-x", hours: 1, work_type: "Armado" })]),
       ),
     ).toMatch(/dado de baja/);
   });

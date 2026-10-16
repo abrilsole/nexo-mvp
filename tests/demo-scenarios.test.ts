@@ -1,5 +1,6 @@
 // Escenarios obligatorios de la demo, sobre el seed real de P-1042.
 import { describe, expect, it } from "vitest";
+import type { WorkAssignment } from "@/types";
 import { buildSeed, MAIN_DEMO_PROJECT_ID } from "@/lib/seed-data";
 import { projectEconomics } from "@/lib/calculations";
 import { projectAlerts, projectHealth } from "@/lib/alerts";
@@ -7,7 +8,6 @@ import { materialRows } from "@/lib/material-reconciliation";
 import { DEFAULT_SETTINGS as S } from "@/lib/constants";
 import * as ops from "@/lib/project-operations";
 import { todayISO } from "@/lib/formatting";
-import { historyLearnings } from "@/lib/insights";
 import { applyChange, availableToProject, releaseToWarehouse, projectHoldings } from "@/lib/stock";
 import { projectMaterialFlow } from "@/lib/material-flow";
 
@@ -83,36 +83,39 @@ describe("escenario 4 y 5 — compra NO cambia margen, consumo SÍ", () => {
   });
 });
 
-describe("escenario 6 — horas", () => {
-  it("10 h × $15.000 del operario = $150.000, congeladas aunque cambie la tarifa", () => {
+describe("escenario 6 — horas (siempre contra una asignación)", () => {
+  /** Asignación de hoy en el mostrador de P-1042. */
+  const asg = (operatorId: string, id = `asg-t-${operatorId}`, date = today): WorkAssignment => ({
+    id, projectId: MAIN_DEMO_PROJECT_ID, itemId: "itm-mostrador", rubro: "carpinteria_madera", operatorId, date, plannedHours: 8, createdBy: "x", createdAt: "",
+  });
+  it("10 h × $15.000 del operario = $150.000, congeladas aunque cambie la tarifa; producto y rubro salen de la asignación", () => {
     const { p, operators } = seed();
     const before = projectEconomics(p);
-    const after = ops.logHours(p, operators, { operatorId: "op-juan", date: today, hours: 10, workType: "Carpintería" }, S, ctx);
+    const after = ops.logHours(p, operators, [asg("op-juan")], { assignmentId: "asg-t-op-juan", hours: 10 }, S, ctx);
     const entry = after.actualEntries.at(-1)!;
     expect(entry.amount).toBe(150_000);
-    expect(entry.operatorId).toBe("op-juan");
+    expect(entry).toMatchObject({ operatorId: "op-juan", itemId: "itm-mostrador", rubro: "carpinteria_madera", assignmentId: "asg-t-op-juan", date: today });
     expect(projectEconomics(after).actualCostToDate).toBe(before.actualCostToDate + 150_000);
     // Subir la tarifa no cambia lo ya registrado.
     const raised = operators.map((o) => (o.id === "op-juan" ? { ...o, hourlyCost: 99_000 } : o));
-    expect(after.actualEntries.at(-1)!.labor?.hourlyCost).toBe(15_000);
-    const next = ops.logHours(after, raised, { operatorId: "op-juan", date: today, hours: 1, workType: "Carpintería" }, S, ctx);
+    const next = ops.logHours(after, raised, [asg("op-juan", "asg-2")], { assignmentId: "asg-2", hours: 1 }, S, ctx);
     expect(next.actualEntries.at(-1)!.amount).toBe(99_000);
     expect(next.actualEntries.at(-2)!.amount).toBe(150_000);
   });
-  it("un operario sólo carga sus horas y sólo en proyectos asignados", () => {
+  it("sin asignación no hay horas; un operario solo carga sobre las suyas", () => {
     const { p, operators } = seed();
+    expect(() => ops.logHours(p, operators, [], { assignmentId: "nada", hours: 2 }, S, ctx)).toThrow(/asignación/);
     const juan: ops.Ctx = { ...ctx, role: "operator", operatorId: "op-juan", actor: "Juan Pérez" };
-    expect(() => ops.logHours(p, operators, { operatorId: "op-diego", date: today, hours: 2, workType: "Armado" }, S, juan)).toThrow(/propias/);
-    const stranger: ops.Ctx = { ...juan, operatorId: "op-sofia" };
-    expect(() => ops.logHours({ ...p, assignedOperatorIds: ["op-juan"] }, operators, { date: today, hours: 2, workType: "x" }, S, stranger)).toThrow(/asignado/);
-    const ok = ops.logHours(p, operators, { date: today, hours: 2, workType: "Corte" }, S, juan);
+    expect(() => ops.logHours(p, operators, [asg("op-diego")], { assignmentId: "asg-t-op-diego", hours: 2 }, S, juan)).toThrow(/no es tuya/);
+    const ok = ops.logHours(p, operators, [asg("op-juan")], { assignmentId: "asg-t-op-juan", hours: 2 }, S, juan);
     expect(ok.actualEntries.at(-1)!.operatorId).toBe("op-juan");
   });
-  it("bloquea más de 24 h por día y pide confirmar sobre 16 h", () => {
+  it("bloquea más de 24 h por día y pide confirmar sobre la jornada", () => {
     const { p, operators } = seed();
-    expect(() => ops.logHours(p, operators, { operatorId: "op-juan", date: today, hours: 25, workType: "x" }, S, ctx)).toThrow(/24/);
-    expect(() => ops.logHours(p, operators, { operatorId: "op-juan", date: today, hours: 17, workType: "x" }, S, ctx)).toThrow(/Confirmá/);
-    const ok = ops.logHours(p, operators, { operatorId: "op-juan", date: today, hours: 17, workType: "x", confirmHighHours: true }, S, ctx);
+    const a = [asg("op-juan")];
+    expect(() => ops.logHours(p, operators, a, { assignmentId: a[0].id, hours: 25 }, S, ctx)).toThrow(/24/);
+    expect(() => ops.logHours(p, operators, a, { assignmentId: a[0].id, hours: 17 }, S, ctx)).toThrow(/Confirmá/);
+    const ok = ops.logHours(p, operators, a, { assignmentId: a[0].id, hours: 17, confirmHighHours: true }, S, ctx);
     expect(ok.actualEntries.at(-1)!.labor?.hours).toBe(17);
   });
 });
@@ -153,7 +156,8 @@ describe("estados y ejecución", () => {
     for (const id of ["p-1056", "p-1051"]) {
       const p = projects.find((x) => x.id === id)!;
       expect(() => ops.registerUsage(p, stock, { ...PLATE, consumed: 1, waste: 0, date: today }, S, ctx)).toThrow(/No se puede registrar/);
-      expect(() => ops.logHours({ ...p, assignedOperatorIds: ["op-juan"] }, operators, { operatorId: "op-juan", date: today, hours: 2, workType: "x" }, S, ctx)).toThrow(/No se puede registrar/);
+      const a: WorkAssignment = { id: "a", projectId: p.id, itemId: p.items[0].id, rubro: "carpinteria_madera", operatorId: "op-juan", date: today, plannedHours: 2, createdBy: "x", createdAt: "" };
+      expect(() => ops.logHours({ ...p, assignedOperatorIds: ["op-juan"] }, operators, [a], { assignmentId: "a", hours: 2 }, S, ctx)).toThrow(/No se puede registrar/);
       expect(() => ops.addActual(p, { type: "logistics", description: "x", date: today, amount: 100 }, S, ctx)).toThrow(/No se puede registrar/);
     }
   });
@@ -199,12 +203,6 @@ describe("escenario 9 y 10 — cierre e historial", () => {
     expect(() => ops.addPurchase(closed, s, { materialName: "X", quantity: 1, unit: "u", unitCost: 1, date: today }, ctx)).toThrow();
     // Devolver al stock no cambia el costo imputable.
     expect(e.actualCostToDate).toBe(projectEconomics(p).actualCostToDate);
-  });
-  it("historial genera aprendizajes con los finalizados", () => {
-    const { projects } = seed();
-    const learnings = historyLearnings(projects.filter((x) => x.status === "completed"));
-    expect(learnings.length).toBeGreaterThanOrEqual(3);
-    expect(learnings[0].text).toMatch(/materiales terminaron/);
   });
   it("costo presupuestado congelado en producción", () => {
     const { p } = seed();

@@ -6,6 +6,7 @@ import { DEFAULT_FINANCIAL_PCT, DEFAULT_HOURS_PER_DAY, DEFAULT_OVERTIME_MULTIPLI
 import { isRubroId } from "@/lib/rubros";
 import type {
   ActivityEvent,
+  ProductRubro,
   PurchaseLineStatus,
   ActualEntry,
   Attachment,
@@ -190,6 +191,8 @@ const childToRow: { [K in ChildKey]: (org: string, projectId: string, item: Proj
     name: i.name,
     description: i.description ?? null,
     quantity: i.quantity,
+    rubros: i.rubros,
+    completed_units: i.completedUnits,
   }),
   stageLogs: (org, projectId, l: StageLog, position) => ({
     organization_id: org,
@@ -327,7 +330,17 @@ function itemFromRow(r: Row): ProjectItem {
     name: String(r.name),
     description: opt(r.description as string | null),
     quantity: num(r.quantity),
+    rubros: productRubrosOf(r.rubros),
+    completedUnits: num(r.completed_units ?? 0),
   };
+}
+
+/** Rubros de un producto guardados como jsonb: se descartan los que no son del catálogo. */
+function productRubrosOf(v: unknown): ProductRubro[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((x: Record<string, unknown>) =>
+    isRubroId(x?.rubro) ? [{ rubro: x.rubro, hours: num(x.hours), workers: Math.max(1, Math.round(num(x.workers ?? 1))) }] : [],
+  );
 }
 
 function stageLogFromRow(r: Row): StageLog {
@@ -690,6 +703,7 @@ export function assignmentFromRow(r: Row): WorkAssignment {
   return {
     id: String(r.id),
     projectId: String(r.project_id),
+    itemId: opt(r.item_id as string | null),
     rubro: (isRubroId(r.rubro) ? r.rubro : "carpinteria_madera"),
     operatorId: String(r.operator_id),
     date: String(r.date),
@@ -701,8 +715,17 @@ export function assignmentFromRow(r: Row): WorkAssignment {
 }
 
 /** Argumento de planta_save_assignment (la base valida y completa quién la cargó). */
-export function assignmentToParams(a: Pick<WorkAssignment, "id" | "projectId" | "rubro" | "operatorId" | "date" | "plannedHours" | "notes">): Row {
-  return { id: a.id, project_id: a.projectId, rubro: a.rubro, operator_id: a.operatorId, date: a.date, planned_hours: a.plannedHours, notes: a.notes ?? null };
+export function assignmentToParams(a: Pick<WorkAssignment, "id" | "projectId" | "itemId" | "rubro" | "operatorId" | "date" | "plannedHours" | "notes">): Row {
+  return {
+    id: a.id,
+    project_id: a.projectId,
+    item_id: a.itemId ?? null,
+    rubro: a.rubro,
+    operator_id: a.operatorId,
+    date: a.date,
+    planned_hours: a.plannedHours,
+    notes: a.notes ?? null,
+  };
 }
 
 export function lineStatusFromRow(r: Row): PurchaseLineStatus {

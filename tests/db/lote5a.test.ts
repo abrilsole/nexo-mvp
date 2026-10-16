@@ -6,7 +6,7 @@ import type { PGlite } from "@electric-sql/pglite";
 import { DEFAULT_SETTINGS } from "@/lib/constants";
 import { buildSeed, MAIN_DEMO_PROJECT_ID } from "@/lib/seed-data";
 import { workspacePayload } from "@/lib/supabase/workspace";
-import { asUser, createDb, errorAs, migrateFrom, signUp } from "./harness";
+import { asUser, assignFor, createDb, errorAs, migrateFrom, signUp } from "./harness";
 
 const LOTE_5A = "20261016";
 const APPROVED = "p-1051";
@@ -272,8 +272,10 @@ describe("precios con vigencia", () => {
       );
     await add("ph-juan-10", 10_000, daysAgo(40));
     await add("ph-juan-15", 15_000, daysAgo(6)); // cambio a mitad de mes
-    const log = (id: string, date: string) =>
-      asUser(db, juan, (tx) => tx.query("select taller_log_hours($1::jsonb)", [JSON.stringify({ id, project_id: MAIN_DEMO_PROJECT_ID, date, hours: 2, work_type: "Armado" })]));
+    const log = async (id: string, date: string) => {
+      const assignment = await assignFor(db, laura, "op-juan", date, `asg-${id}`);
+      return asUser(db, juan, (tx) => tx.query("select taller_log_hours($1::jsonb)", [JSON.stringify({ id, assignment_id: assignment, hours: 2, work_type: "Armado" })]));
+    };
     await log("h-antes", daysAgo(9));
     await log("h-despues", daysAgo(3));
     const amount = async (id: string) => Number((await db.query<{ a: string }>("select amount::text as a from actual_entries where id = $1", [id])).rows[0].a);
@@ -287,9 +289,8 @@ describe("precios con vigencia", () => {
   });
   it("con la valuación por tarifa general (hipótesis a confirmar), las horas usan la tarifa de Mano de obra de ese día", async () => {
     await db.query("update cost_settings set labor_valuation = 'general' where organization_id = $1", [org]);
-    await asUser(db, juan, (tx) =>
-      tx.query("select taller_log_hours($1::jsonb)", [JSON.stringify({ id: "h-general", project_id: MAIN_DEMO_PROJECT_ID, date: daysAgo(2), hours: 1, work_type: "Armado" })]),
-    );
+    const assignment = await assignFor(db, laura, "op-juan", daysAgo(2), "asg-general");
+    await asUser(db, juan, (tx) => tx.query("select taller_log_hours($1::jsonb)", [JSON.stringify({ id: "h-general", assignment_id: assignment, hours: 1, work_type: "Armado" })]));
     const [{ a }] = (await db.query<{ a: string }>("select amount::text as a from actual_entries where id = 'h-general'")).rows;
     expect(Number(a)).toBe(19_000);
     await db.query("update cost_settings set labor_valuation = 'operator' where organization_id = $1", [org]);

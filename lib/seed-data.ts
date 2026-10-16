@@ -26,6 +26,7 @@ import { ACTUAL_TYPE_LABELS, DEMO_USERS, MATERIAL_CATALOG, STATUS_LABELS, STATUS
 import { actualInputCategory } from "./project-operations";
 import { budgetLineTotal } from "./calculations";
 import { toISODate } from "./formatting";
+import { rubroLabel } from "./rubros";
 import { activityTimeline, actualMessage, leftoverMessage, purchaseMessage, usageMessage } from "./activity";
 import { applyUsageToPool, poolAvailableFor } from "./reusable-pool";
 import { deriveLedgerFromLegacy } from "./stock-legacy";
@@ -36,7 +37,10 @@ const PLANTA = DEMO_USERS.jefe_planta.name;
 
 interface BudgetSpec {
   materials: Array<[materialId: string, qty: number, unitCost: number]>;
+  /** Mano de obra de Carpintería madera: [horas, tarifa]. */
   labor?: [hours: number, rate: number];
+  /** Mano de obra de otros rubros (proyecto estrella): [rubro, horas, tarifa, operarios]. */
+  laborRubros?: Array<[rubro: RubroId, hours: number, rate: number, workers: number]>;
   /** Horas de diseño y de administración del rubro Carpintería madera: [horas, tarifa]. */
   hours?: Partial<Record<"design" | "admin", [hours: number, rate: number]>>;
   /** Importes globales por rubro (como los cargaría el Cotizador). */
@@ -54,7 +58,17 @@ type UsageSpec = [
   by?: string,
 ];
 type PurchaseSpec = [dayOffset: number, materialId: string, qty: number, unitCost: number, supplier?: string];
-type LaborSpec = [dayOffset: number, role: string, worker: string, hours: number, rate: number];
+/**
+ * Producto del proyecto: [id, nombre, cantidad, unidades terminadas, rubros: [rubro, horas estimadas, operarios]].
+ * Las horas estimadas son para toda la cantidad.
+ */
+type ProductSpec = [id: string, name: string, quantity: number, completed: number, rubros: Array<[rubro: RubroId, hours: number, workers: number]>];
+/**
+ * Trabajo ya hecho: desde `fromDay`, el operario tuvo asignadas `planned` horas en el producto + rubro (en días
+ * hábiles de hasta 8 h, sin pisar otros días suyos) y cargó `logged` horas contra esas asignaciones.
+ * `rate`: costo por hora congelado (si falta, el del operario).
+ */
+type WorkSpec = [fromDay: number, operatorId: string, itemId: string, rubro: RubroId, planned: number, logged: number, rate?: number];
 type CostSpec = [
   dayOffset: number,
   type: Exclude<ActualEntryType, "labor">,
@@ -80,7 +94,8 @@ interface ProjectSpec {
   budget: BudgetSpec;
   purchases?: PurchaseSpec[];
   usages?: UsageSpec[];
-  labor?: LaborSpec[];
+  products?: ProductSpec[];
+  work?: WorkSpec[];
   costs?: CostSpec[];
   closedAt?: number;
 }
@@ -102,17 +117,94 @@ function material(id: string) {
 const OPERATOR_SPECS: Array<{ id: string; name: string; role: string; hourlyCost: number }> = [
   { id: "op-juan", name: "Juan Pérez", role: "Carpintería", hourlyCost: 15_000 },
   { id: "op-diego", name: "Diego Sosa", role: "Armado", hourlyCost: 12_500 },
+  { id: "op-marcos", name: "Marcos Gil", role: "Herrería", hourlyCost: 14_000 },
+  { id: "op-lucia", name: "Lucía Ferreyra", role: "Embalaje y terminaciones", hourlyCost: 11_000 },
   { id: "op-sofia", name: "Sofía Méndez", role: "Oficina técnica", hourlyCost: 15_000 },
 ];
 
-function operatorIdFor(name: string): string | undefined {
-  return OPERATOR_SPECS.find((o) => o.name === name)?.id;
-}
+/** Horas máximas de una asignación del seed por día. */
+const SEED_DAY_HOURS = 8;
 
 class SeedBuilder {
   private seq = 0;
   pool: ReusableMaterial[] = [];
+  /** Asignaciones de toda la demo (pasadas, con sus horas cargadas, y las de hoy en adelante). */
+  assignments: WorkAssignment[] = [];
+  /** Días ya ocupados de cada operario (un día no se asigna dos veces en el trabajo ya hecho). */
+  private busy = new Map<string, Set<number>>();
   constructor(private readonly now: Date) {}
+
+  /** Próximo día hábil (lunes a viernes) libre del operario desde `from`. */
+  private freeDay(operatorId: string, from: number): number {
+    const used = this.busy.get(operatorId) ?? new Set<number>();
+    let off = from;
+    for (;;) {
+      const dow = new Date(this.now.getFullYear(), this.now.getMonth(), this.now.getDate() + off).getDay();
+      if (dow !== 0 && dow !== 6 && !used.has(off)) break;
+      off += 1;
+    }
+    used.add(off);
+    this.busy.set(operatorId, used);
+    return off;
+  }
+
+  assignment(projectId: string, itemId: string, rubro: RubroId, operatorId: string, off: number, plannedHours: number): WorkAssignment {
+    const a: WorkAssignment = {
+      id: `asg-${(this.assignments.length + 1).toString().padStart(4, "0")}`,
+      projectId,
+      itemId,
+      rubro,
+      operatorId,
+      date: this.day(off),
+      plannedHours,
+      createdBy: PLANTA,
+      createdAt: this.at(off - 3, 9),
+    };
+    this.assignments.push(a);
+    return a;
+  }
+
+  /** Trabajo ya hecho: asignaciones en días hábiles pasados y las horas cargadas contra cada una. */
+  work(p: Project, [from, operatorId, itemId, rubro, planned, logged, rate]: WorkSpec): ActualEntry[] {
+    const op = OPERATOR_SPECS.find((o) => o.id === operatorId);
+    if (!op) throw new Error(`Seed: operario inexistente ${operatorId}`);
+    const days = Math.max(1, Math.ceil(planned / SEED_DAY_HOURS));
+    const half = (n: number) => Math.round(n * 2) / 2;
+    const entries: ActualEntry[] = [];
+    let plannedLeft = planned;
+    let loggedLeft = logged;
+    for (let d = 0; d < days; d++) {
+      const last = d === days - 1;
+      const plan = last ? plannedLeft : half(planned / days);
+      const done = last ? loggedLeft : half(logged / days);
+      plannedLeft -= plan;
+      loggedLeft -= done;
+      const off = this.freeDay(operatorId, from);
+      if (off >= 0) throw new Error(`Seed: el trabajo de ${op.name} en ${p.code} no entra antes de hoy`);
+      const a = this.assignment(p.id, itemId, rubro, operatorId, off, plan);
+      if (!(done > 0)) continue;
+      const hourlyCost = rate ?? op.hourlyCost;
+      entries.push({
+        id: this.id("act"),
+        projectId: p.id,
+        date: a.date,
+        type: "labor",
+        category: "labor",
+        description: `${rubroLabel(rubro)} — ${op.name}`,
+        amount: done * hourlyCost,
+        labor: { role: rubroLabel(rubro), workerName: op.name, hours: done, hourlyCost },
+        operatorId,
+        stage: "production",
+        itemId,
+        rubro,
+        assignmentId: a.id,
+        createdBy: op.name,
+        createdAt: this.at(off, 18),
+      });
+    }
+    return entries;
+  }
+
 
   id(prefix: string) {
     this.seq += 1;
@@ -157,6 +249,19 @@ class SeedBuilder {
         unit: "h",
         unitCost: rate,
         total: budgetLineTotal({ quantity: hours, unitCost: rate }),
+      });
+    }
+    for (const [rubro, hours, rate, workers] of spec.laborRubros ?? []) {
+      lines.push({
+        id: this.id("bl"),
+        category: "labor",
+        rubro,
+        description: `${rubroLabel(rubro)}: mano de obra (${workers} ${workers === 1 ? "operario" : "operarios"} × ${hours / workers} h)`,
+        quantity: hours,
+        unit: "h",
+        unitCost: rate,
+        total: budgetLineTotal({ quantity: hours, unitCost: rate }),
+        workers,
       });
     }
     for (const [category, [hours, rate]] of Object.entries(spec.hours ?? {}) as Array<["design" | "admin", [number, number]]>) {
@@ -212,7 +317,13 @@ class SeedBuilder {
       isClosed: spec.status === "completed",
       closedAt: spec.closedAt !== undefined ? this.at(spec.closedAt, 17) : undefined,
       assignedOperatorIds: [],
-      items: [],
+      items: (spec.products ?? []).map(([id, name, quantity, completed, rubros]) => ({
+        id,
+        name,
+        quantity,
+        completedUnits: completed,
+        rubros: rubros.map(([rubro, hours, workers]) => ({ rubro, hours, workers })),
+      })),
       stageLogs: [],
       attachments: [],
     };
@@ -286,24 +397,11 @@ class SeedBuilder {
       if (leftover > 0) ev(off, "leftover", "Sistema", leftoverMessage(u.materialName, leftover, u.unit), 15);
     }
 
-    for (const [off, role, worker, hours, rate] of spec.labor ?? []) {
-      const e: ActualEntry = {
-        id: this.id("act"),
-        projectId: p.id,
-        date: this.day(off),
-        type: "labor",
-        category: "labor",
-        description: `${role} — ${worker}`,
-        amount: hours * rate,
-        labor: { role, workerName: worker, hours, hourlyCost: rate },
-        operatorId: operatorIdFor(worker),
-        // La demo cotiza la mano de obra en Carpintería madera: las horas se cargan en ese rubro.
-        rubro: "carpinteria_madera",
-        createdBy: worker,
-        createdAt: this.at(off, 18),
-      };
-      p.actualEntries.push(e);
-      ev(off, "cost", worker, actualMessage(e), 18);
+    for (const w of spec.work ?? []) {
+      for (const e of this.work(p, w)) {
+        p.actualEntries.push(e);
+        ev(Math.round((Date.parse(e.date) - Date.parse(this.day(0))) / 86_400_000), "cost", e.createdBy, actualMessage(e), 18);
+      }
     }
 
     for (const [off, type, description, amount, supplier, category] of spec.costs ?? []) {
@@ -338,14 +436,9 @@ class SeedBuilder {
         lines: p.budgetLines.map((l) => ({ ...l })),
       };
     }
-    // Operarios asignados: los que ya cargaron horas + el equipo base en obras abiertas.
-    const worked = new Set((p.actualEntries.map((e) => e.operatorId).filter(Boolean)) as string[]);
-    const open = ["purchasing", "production", "installation"].includes(spec.status);
-    if (open) {
-      worked.add("op-juan");
-      worked.add("op-diego");
-    }
-    p.assignedOperatorIds = OPERATOR_SPECS.map((o) => o.id).filter((id) => worked.has(id));
+    // Equipo del proyecto: los operarios con asignaciones (se completa con las de hoy en adelante en buildSeed).
+    const team = new Set(this.assignments.filter((a) => a.projectId === p.id).map((a) => a.operatorId));
+    p.assignedOperatorIds = OPERATOR_SPECS.map((o) => o.id).filter((id) => team.has(id));
     return p;
   }
 }
@@ -353,7 +446,7 @@ class SeedBuilder {
 export interface SeedState {
   projects: Project[];
   operators: Operator[];
-  /** Asignaciones del Jefe de planta para esta semana (Lote 5B). */
+  /** Asignaciones del Jefe de planta: las pasadas (con sus horas cargadas) y las de hoy en adelante. */
   assignments: WorkAssignment[];
   /** Estados de compra de ejemplo (Lote 5C): una línea cotizando y una ya recibida. */
   lineStatuses: PurchaseLineStatus[];
@@ -365,59 +458,26 @@ export interface SeedState {
 
 export const MAIN_DEMO_PROJECT_ID = "p-1042";
 
-/**
- * Circuito completo de planta en la demo (Lote 5B): asignaciones de esta semana y horas cargadas sobre ellas.
- * Ayer Juan tenía 4 h previstas en P-1042 y cargó 9 h (desvío → alerta); hoy Diego tiene 12 h asignadas con una
- * jornada de 9,5 h (sobrecarga → horas extra).
- */
-// [día, operario, proyecto, horas previstas, horas cargadas (undefined = todavía no cargó)]
-const ASSIGNMENT_SPECS: Array<[number, string, string, number, number | undefined]> = [
-  [-2, "op-juan", "p-1045", 8, 8],
-  [-1, "op-juan", MAIN_DEMO_PROJECT_ID, 4, 9],
-  [-1, "op-diego", "p-1045", 8, 7.5],
-  [0, "op-juan", MAIN_DEMO_PROJECT_ID, 3, undefined],
-  [0, "op-juan", "p-1045", 6, undefined],
-  [0, "op-diego", "p-1048", 8, undefined],
-  [0, "op-diego", MAIN_DEMO_PROJECT_ID, 4, undefined],
-  [1, "op-juan", MAIN_DEMO_PROJECT_ID, 8, undefined],
-  [1, "op-diego", "p-1048", 8, undefined],
-  [2, "op-juan", "p-1045", 8, undefined],
-];
+/** Proyecto estrella de la demo (10 mesas + 100 sillas): recorre los 4 roles. */
+export const STAR_PROJECT_ID = "p-1058";
 
-function seedAssignments(b: SeedBuilder, projects: Project[]): WorkAssignment[] {
-  return ASSIGNMENT_SPECS.map(([off, operatorId, projectId, planned, logged], i) => {
-    const a: WorkAssignment = {
-      id: `asg-demo-${String(i + 1).padStart(2, "0")}`,
-      projectId,
-      rubro: "carpinteria_madera",
-      operatorId,
-      date: b.day(off),
-      plannedHours: planned,
-      createdBy: PLANTA,
-      createdAt: b.at(off - 3, 9),
-    };
-    const project = projects.find((p) => p.id === projectId);
-    const op = OPERATOR_SPECS.find((o) => o.id === operatorId);
-    if (project && op && logged !== undefined) {
-      project.actualEntries.push({
-        id: b.id("act"),
-        projectId,
-        date: a.date,
-        type: "labor",
-        category: "labor",
-        description: `Carpintería madera — ${op.name}`,
-        amount: logged * op.hourlyCost,
-        labor: { role: "Carpintería madera", workerName: op.name, hours: logged, hourlyCost: op.hourlyCost },
-        operatorId,
-        rubro: "carpinteria_madera",
-        assignmentId: a.id,
-        createdBy: op.name,
-        createdAt: b.at(off, 18),
-      });
-    }
-    return a;
-  });
-}
+/**
+ * Asignaciones de hoy en adelante (todavía sin horas): [día, operario, proyecto, producto, rubro, horas].
+ * Hoy Juan trabaja en las sillas del proyecto estrella: es lo que ve en "Mi día".
+ */
+const UPCOMING: Array<[number, string, string, string, RubroId, number]> = [
+  [0, "op-juan", STAR_PROJECT_ID, "itm-sillas", "carpinteria_madera", 8],
+  [0, "op-diego", "p-1045", "itm-1045-puestos", "carpinteria_madera", 8],
+  [0, "op-marcos", STAR_PROJECT_ID, "itm-sillas", "carpinteria_metalica", 8],
+  [0, "op-lucia", "p-1047", "itm-1047-stand", "carpinteria_madera", 6],
+  [1, "op-juan", STAR_PROJECT_ID, "itm-sillas", "carpinteria_madera", 8],
+  [1, "op-diego", STAR_PROJECT_ID, "itm-sillas", "carpinteria_madera", 8],
+  [1, "op-marcos", STAR_PROJECT_ID, "itm-sillas", "carpinteria_metalica", 8],
+  [2, "op-juan", MAIN_DEMO_PROJECT_ID, "itm-murales", "carpinteria_madera", 8],
+  [2, "op-diego", "p-1048", "itm-1048-exhib", "carpinteria_madera", 8],
+  [3, "op-juan", MAIN_DEMO_PROJECT_ID, "itm-gondolas", "carpinteria_madera", 8],
+  [3, "op-diego", "p-1045", "itm-1045-puestos", "carpinteria_madera", 8],
+];
 
 export function buildSeed(now: Date = new Date()): SeedState {
   const b = new SeedBuilder(now);
@@ -459,9 +519,13 @@ export function buildSeed(now: Date = new Date()): SeedState {
         [-146, "tapacanto", 320, 30, 0, 950],
         [-146, "bisagra", 60, 0, 0, 2_300, "existing_stock"],
       ],
-      labor: [
-        [-150, "Carpintería", "Juan Pérez", 50, 14_000],
-        [-140, "Armado", "Diego Sosa", 40, 14_000],
+      products: [
+        ["itm-0987-barra", "Barra de atención", 1, 1, [["carpinteria_madera", 45, 1]]],
+        ["itm-0987-estantes", "Estantería de exhibición", 6, 6, [["carpinteria_madera", 35, 1]]],
+      ],
+      work: [
+        [-165, "op-juan", "itm-0987-barra", "carpinteria_madera", 45, 50, 14_000],
+        [-165, "op-diego", "itm-0987-estantes", "carpinteria_madera", 35, 40, 14_000],
       ],
       costs: [
         [-135, "outsourcing", "Laqueado barra — Taller Colores", 300_000, "Taller Colores"],
@@ -508,9 +572,13 @@ export function buildSeed(now: Date = new Date()): SeedState {
         [-116, "corredera", 80, 0, 0, 11_000],
         [-115, "tapacanto", 860, 40, 0, 900],
       ],
-      labor: [
-        [-120, "Carpintería", "Juan Pérez", 100, 13_000],
-        [-110, "Armado", "Diego Sosa", 90, 13_000],
+      products: [
+        ["itm-0995-puestos", "Puesto operativo", 40, 40, [["carpinteria_madera", 110, 2]]],
+        ["itm-0995-paneles", "Panel divisorio", 40, 40, [["carpinteria_madera", 70, 1]]],
+      ],
+      work: [
+        [-135, "op-juan", "itm-0995-puestos", "carpinteria_madera", 100, 100, 13_000],
+        [-135, "op-diego", "itm-0995-paneles", "carpinteria_madera", 80, 90, 13_000],
       ],
       costs: [
         [-95, "logistics", "Fletes (2 viajes)", 340_000],
@@ -550,7 +618,8 @@ export function buildSeed(now: Date = new Date()): SeedState {
         [-98, "mdf-18", 13, 1, 0, 78_000],
         [-96, "perfil-alu", 23, 1, 0, 14_500],
       ],
-      labor: [[-95, "Carpintería", "Juan Pérez", 66, 13_000]],
+      products: [["itm-1003-exhib", "Exhibidor de góndola", 12, 12, [["carpinteria_madera", 60, 1]]]],
+      work: [[-104, "op-juan", "itm-1003-exhib", "carpinteria_madera", 60, 66, 13_000]],
       costs: [
         [-85, "outsourcing", "Pintura poliuretánica", 270_000],
         [-78, "logistics", "Envío a sucursales", 150_000],
@@ -594,9 +663,15 @@ export function buildSeed(now: Date = new Date()): SeedState {
         [-76, "perfil-alu", 53, 3, 0, 15_500],
         [-75, "tapacanto", 500, 50, 0, 950],
       ],
-      labor: [
-        [-80, "Carpintería", "Juan Pérez", 85, 14_000],
-        [-70, "Armado", "Diego Sosa", 62, 14_000],
+      products: [
+        ["itm-1011-mostrador", "Mostrador", 1, 1, [["carpinteria_madera", 40, 1]]],
+        ["itm-1011-probadores", "Probador", 4, 4, [["carpinteria_madera", 40, 1]]],
+        ["itm-1011-murales", "Exhibidor mural", 6, 6, [["carpinteria_madera", 50, 1]]],
+      ],
+      work: [
+        [-90, "op-juan", "itm-1011-mostrador", "carpinteria_madera", 40, 45, 14_000],
+        [-90, "op-juan", "itm-1011-probadores", "carpinteria_madera", 40, 40, 14_000],
+        [-90, "op-diego", "itm-1011-murales", "carpinteria_madera", 50, 62, 14_000],
       ],
       costs: [
         [-65, "outsourcing", "Vidrios templados", 480_000, "Vidriería Central"],
@@ -656,11 +731,16 @@ export function buildSeed(now: Date = new Date()): SeedState {
         [-3, "perfil-alu", 26, 2, 2, 16_000],
         [-2, "tapacanto", 190, 30, 0, 1_060],
       ],
-      labor: [
-        [-24, "Oficina técnica", "Sofía Méndez", 20, 15_000],
-        [-20, "Carpintería", "Juan Pérez", 30, 15_000],
-        [-10, "Carpintería", "Juan Pérez", 30, 15_000],
-        [-5, "Armado", "Diego Sosa", 40, 12_500],
+      products: [
+        ["itm-mostrador", "Mostrador de atención", 1, 1, [["carpinteria_madera", 30, 1]]],
+        ["itm-gondolas", "Góndola central", 6, 4, [["carpinteria_madera", 40, 2]]],
+        ["itm-murales", "Exhibidor mural", 8, 2, [["carpinteria_madera", 30, 1]]],
+      ],
+      work: [
+        [-38, "op-juan", "itm-mostrador", "carpinteria_madera", 28, 28],
+        [-36, "op-diego", "itm-gondolas", "carpinteria_madera", 16, 16],
+        [-30, "op-juan", "itm-gondolas", "carpinteria_madera", 16, 14],
+        [-20, "op-juan", "itm-murales", "carpinteria_madera", 16, 16],
       ],
       costs: [
         [-9, "outsourcing", "Laqueado de frentes — Taller Colores", 750_000, "Taller Colores"],
@@ -704,9 +784,13 @@ export function buildSeed(now: Date = new Date()): SeedState {
         [-6, "perfil-alu", 22, 0.5, 0, 15_000],
         [-3, "tapacanto", 260, 15, 0, 1_000],
       ],
-      labor: [
-        [-12, "Carpintería", "Juan Pérez", 35, 14_000],
-        [-4, "Armado", "Diego Sosa", 25, 14_000],
+      products: [
+        ["itm-1045-puestos", "Puesto de trabajo", 24, 10, [["carpinteria_madera", 100, 2]]],
+        ["itm-1045-guardado", "Mueble de guardado", 6, 0, [["carpinteria_madera", 50, 1]]],
+      ],
+      work: [
+        [-19, "op-juan", "itm-1045-puestos", "carpinteria_madera", 24, 24],
+        [-19, "op-diego", "itm-1045-puestos", "carpinteria_madera", 24, 22],
       ],
       costs: [
         [-15, "other", "Planos de taller y renders", 486_000, "Estudio Línea", "design"],
@@ -747,9 +831,10 @@ export function buildSeed(now: Date = new Date()): SeedState {
         [-8, "perfil-alu", 30, 1, 0, 15_000],
         [-7, "tapacanto", 240, 20, 0, 1_000, "existing_stock"],
       ],
-      labor: [
-        [-18, "Carpintería", "Juan Pérez", 45, 14_000],
-        [-6, "Armado", "Diego Sosa", 36, 14_000],
+      products: [["itm-1048-exhib", "Exhibidor de punto de venta", 30, 18, [["carpinteria_madera", 70, 2]]]],
+      work: [
+        [-27, "op-juan", "itm-1048-exhib", "carpinteria_madera", 24, 24],
+        [-27, "op-diego", "itm-1048-exhib", "carpinteria_madera", 24, 24],
       ],
       costs: [[-5, "outsourcing", "Pintura epoxi — primera tanda", 300_000]],
     }),
@@ -787,9 +872,15 @@ export function buildSeed(now: Date = new Date()): SeedState {
         [-28, "mel-grafito-18", 11, 0.5, 0.5, 62_500],
         [-25, "perfil-alu", 28, 1, 1, 15_000],
       ],
-      labor: [
-        [-30, "Carpintería", "Juan Pérez", 60, 14_000],
-        [-20, "Armado", "Diego Sosa", 48, 14_000],
+      products: [
+        ["itm-1039-mostrador", "Mostrador de recepción", 1, 1, [["carpinteria_madera", 60, 1]]],
+        ["itm-1039-banco", "Banco de espera", 2, 2, [["carpinteria_madera", 30, 1]]],
+        ["itm-1039-mural", "Revestimiento mural", 1, 0, [["carpinteria_madera", 20, 1]]],
+      ],
+      work: [
+        [-44, "op-juan", "itm-1039-mostrador", "carpinteria_madera", 56, 56],
+        [-44, "op-diego", "itm-1039-banco", "carpinteria_madera", 24, 24],
+        [-12, "op-marcos", "itm-1039-mural", "carpinteria_madera", 16, 12],
       ],
       costs: [
         [-15, "outsourcing", "Laqueado y enchapado", 960_000, "Taller Colores"],
@@ -809,7 +900,8 @@ export function buildSeed(now: Date = new Date()): SeedState {
       description: "Stand pop-up de 30 m² para lanzamiento de producto (armado y desarme).",
       status: "production",
       start: -22,
-      due: 4,
+      // Atrasado a propósito: la entrega venció y el stand todavía no está terminado.
+      due: -2,
       salesPrice: 4_500_000,
       owner: MGMT,
       budget: {
@@ -830,8 +922,68 @@ export function buildSeed(now: Date = new Date()): SeedState {
         [-15, "fenolico", 4, 0, 0, 72_000],
         [-12, "mdf-18", 5, 0.5, 0, 82_000],
       ],
-      labor: [[-11, "Carpintería", "Juan Pérez", 24, 14_000]],
+      products: [
+        ["itm-1047-stand", "Stand pop-up 30 m²", 1, 0, [["carpinteria_madera", 40, 2]]],
+        ["itm-1047-mostrador", "Mostrador de demostración", 2, 2, [["carpinteria_madera", 10, 1]]],
+      ],
+      work: [
+        [-21, "op-lucia", "itm-1047-mostrador", "carpinteria_madera", 10, 9],
+        [-21, "op-marcos", "itm-1047-stand", "carpinteria_madera", 24, 24],
+      ],
       costs: [[-10, "outsourcing", "Impresión y ploteo de gráfica", 520_000, "Gráfica Rápida"]],
+    }),
+  );
+
+  // ── Proyecto estrella de la demo: atraviesa los 4 roles ──
+  // Mesas terminadas (con Juan pasado de horas en carpintería → alerta), sillas en producción (40/100),
+  // compras en distintos estados y un rubro de las sillas sin operario asignado.
+  projects.push(
+    b.project({
+      id: STAR_PROJECT_ID,
+      code: "P-1058",
+      name: "Restaurante Costanera – 10 mesas y 100 sillas",
+      client: "Grupo Costanera",
+      projectType: "Mobiliario gastronómico",
+      description: "10 mesas de comedor y 100 sillas apilables para el salón del restaurante.",
+      status: "production",
+      start: -20,
+      due: 25,
+      salesPrice: 16_000_000,
+      owner: MGMT,
+      budget: {
+        materials: [
+          ["multilaminado-18", 20, 95_000],
+          ["cano-40", 300, 9_000],
+          ["tapacanto", 200, 1_000],
+        ],
+        laborRubros: [
+          ["carpinteria_madera", 280, 15_000, 2],
+          ["carpinteria_metalica", 80, 14_000, 1],
+          ["embalaje", 26, 11_000, 1],
+        ],
+        direct: { bought: 600_000, transport: 400_000, contingency: 300_000 },
+      },
+      purchases: [
+        [-17, "multilaminado-18", 20, 98_000, "Maderera Oeste"],
+        [-16, "cano-40", 180, 10_500, "Hierros Sur"],
+      ],
+      usages: [
+        [-14, "multilaminado-18", 8, 0.5, 0.5, 98_000],
+        [-10, "cano-40", 120, 5, 0, 10_500],
+      ],
+      products: [
+        ["itm-mesas", "Mesa de comedor", 10, 10, [["carpinteria_madera", 60, 2], ["carpinteria_metalica", 20, 1], ["embalaje", 6, 1]]],
+        ["itm-sillas", "Silla apilable", 100, 40, [["carpinteria_madera", 220, 2], ["carpinteria_metalica", 60, 1], ["embalaje", 20, 1]]],
+      ],
+      work: [
+        [-18, "op-juan", "itm-mesas", "carpinteria_madera", 30, 44],
+        [-18, "op-diego", "itm-mesas", "carpinteria_madera", 30, 30],
+        [-18, "op-marcos", "itm-mesas", "carpinteria_metalica", 20, 20],
+        [-8, "op-lucia", "itm-mesas", "embalaje", 6, 6],
+        [-12, "op-diego", "itm-sillas", "carpinteria_madera", 48, 46],
+        [-8, "op-marcos", "itm-sillas", "carpinteria_metalica", 24, 24],
+      ],
+      costs: [[-6, "outsourcing", "Laqueado de tapas de mesa — Taller Colores", 560_000, "Taller Colores"]],
     }),
   );
 
@@ -860,6 +1012,11 @@ export function buildSeed(now: Date = new Date()): SeedState {
         hours: { design: [10, 27_000], admin: [6, 27_000] },
         direct: { transport: 200_000, montaje: 400_000, contingency: 250_000 },
       },
+      products: [
+        ["itm-1051-placard", "Placard", 3, 0, [["carpinteria_madera", 50, 2]]],
+        ["itm-1051-vanitory", "Vanitory", 1, 0, [["carpinteria_madera", 15, 1]]],
+        ["itm-1051-tv", "Mueble de TV", 1, 0, [["carpinteria_madera", 25, 1]]],
+      ],
     }),
   );
 
@@ -892,6 +1049,11 @@ export function buildSeed(now: Date = new Date()): SeedState {
         [-3, "mel-grafito-18", 22, 63_000, "Placas del Plata"],
         [-2, "mdf-18", 10, 84_000, "Maderera Oeste"],
       ],
+      products: [
+        ["itm-1053-cocina", "Cocina modelo", 2, 0, [["carpinteria_madera", 80, 2]]],
+        ["itm-1053-mostrador", "Mostrador", 1, 0, [["carpinteria_madera", 30, 1]]],
+        ["itm-1053-estantes", "Estantería", 6, 0, [["carpinteria_madera", 30, 1]]],
+      ],
     }),
   );
 
@@ -918,21 +1080,13 @@ export function buildSeed(now: Date = new Date()): SeedState {
         hours: { design: [12, 27_000], admin: [4, 27_000] },
         direct: { bought: 400_000, transport: 250_000, montaje: 350_000, contingency: 150_000 },
       },
+      products: [["itm-1056-stand", "Stand institucional 50 m²", 1, 0, [["carpinteria_madera", 60, 2]]]],
     }),
   );
 
-  // Muebles, bitácora y archivos del proyecto demo principal.
+  // Bitácora del proyecto demo principal.
   const main = projects.find((x) => x.id === MAIN_DEMO_PROJECT_ID);
   if (main) {
-    main.items = [
-      { id: "itm-mostrador", name: "Mostrador de atención", description: "Frente laqueado, tapa de MDF y cajonera.", quantity: 1 },
-      { id: "itm-gondolas", name: "Góndolas centrales", description: "Estructura de melamina y perfil de aluminio.", quantity: 6 },
-      { id: "itm-murales", name: "Exhibidores murales", quantity: 8 },
-    ];
-    const labor = main.actualEntries.filter((e) => e.type === "labor");
-    if (labor[1]) labor[1].itemId = "itm-mostrador";
-    if (labor[2]) labor[2].itemId = "itm-gondolas";
-    if (labor[3]) labor[3].itemId = "itm-gondolas";
     const logs: StageLog[] = [
       { id: "log-0001", projectId: main.id, stage: "purchasing", date: b.day(-34), kind: "note", text: "Se compraron las placas y los herrajes con el proveedor habitual. El tapacanto se pidió con 10% extra por la merma anterior.", responsible: MGMT, createdBy: MGMT, createdAt: b.at(-34, 13) },
       { id: "log-0002", projectId: main.id, stage: "production", date: b.day(-22), kind: "incident", text: "Una placa de melamina grafito llegó con una esquina golpeada. Se usó igual en piezas chicas y se informó al proveedor.", responsible: PLANTA, createdBy: PLANTA, createdAt: b.at(-22, 16) },
@@ -948,16 +1102,24 @@ export function buildSeed(now: Date = new Date()): SeedState {
   }
 
   const operators: Operator[] = OPERATOR_SPECS.map((o) => ({ ...o, active: true, createdAt: b.at(-200, 9) }));
-  const assignments = seedAssignments(b, projects);
+  for (const [off, operatorId, projectId, itemId, rubro, hours] of UPCOMING) {
+    b.assignment(projectId, itemId, rubro, operatorId, off, hours);
+    const project = projects.find((x) => x.id === projectId);
+    if (project && !project.assignedOperatorIds.includes(operatorId)) project.assignedOperatorIds = [...project.assignedOperatorIds, operatorId];
+  }
+  const assignments = b.assignments;
   const lineStatuses = seedLineStatuses(projects, b.at(0));
   return { projects, operators, assignments, lineStatuses, stock: deriveLedgerFromLegacy(projects, b.pool), legacyPool: b.pool };
 }
 
-/** Compras (Lote 5C): P-1053 cotiza el perfil de aluminio y P-1045 ya recibió la melamina. */
+/** Compras: P-1053 cotiza el perfil; P-1045 recibió la melamina; P-1058 recibió el multilaminado, compró parte del caño y cotiza el tapacanto. */
 function seedLineStatuses(projects: Project[], now: string): PurchaseLineStatus[] {
   const specs: Array<[code: string, materialId: string, status: PurchaseLineStatus["status"]]> = [
     ["P-1053", "perfil-alu", "quoting"],
     ["P-1045", "mel-blanca-18", "received"],
+    ["P-1058", "multilaminado-18", "received"],
+    ["P-1058", "cano-40", "purchased"],
+    ["P-1058", "tapacanto", "quoting"],
   ];
   return specs.flatMap(([code, materialId, status]) => {
     const p = projects.find((x) => x.code === code);

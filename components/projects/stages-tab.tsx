@@ -69,7 +69,7 @@ export function StagesTab({ project }: { project: Project }) {
               <Field label="Responsable (opcional)" htmlFor="sl-resp">
                 <Input id="sl-resp" value={responsible} onChange={(e) => setResponsible(e.target.value)} placeholder={actor} />
               </Field>
-              <Field label="Mueble (opcional)" htmlFor="sl-item">
+              <Field label="Producto (opcional)" htmlFor="sl-item">
                 <Select id="sl-item" value={itemId} onChange={(e) => setItemId(e.target.value)}>
                   <option value="">General del proyecto</option>
                   {project.items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}

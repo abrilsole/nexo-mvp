@@ -8,7 +8,7 @@ const menu = (r: RoleKey) => navFor(r).map((i) => i.label);
 
 describe("cada rol ve exactamente su menú", () => {
   it("Administrativo: todo, con Horas y Configuración (ahí están Usuarios)", () => {
-    expect(menu("admin")).toEqual(["Dashboard", "Proyectos", "Alertas", "Horas", "Cotizador", "Historial", "Stock", "Operarios", "Configuración"]);
+    expect(menu("admin")).toEqual(["Dashboard", "Proyectos", "Alertas", "Horas", "Cotizador", "Stock", "Operarios", "Configuración"]);
   });
   it("Compras: Dashboard, Proyectos, Alertas, Cotizador, Historial y Stock (Lote 5C, sin ítems Próximamente)", () => {
     expect(menu("compras")).toEqual(["Dashboard", "Proyectos", "Alertas", "Cotizador", "Historial", "Stock"]);

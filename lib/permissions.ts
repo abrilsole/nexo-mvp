@@ -48,7 +48,6 @@ const NAV: Record<RoleKey, NavItem[]> = {
     { href: "/alerts", label: "Alertas", icon: "alerts" },
     { href: "/horas", label: "Horas", icon: "hours" },
     { href: "/quotes", label: "Cotizador", icon: "quotes" },
-    { href: "/history", label: "Historial", icon: "history" },
     { href: "/stock", label: "Stock", icon: "stock" },
     { href: "/operators", label: "Operarios", icon: "operators" },
     { href: "/settings", label: "Configuración", icon: "settings" },

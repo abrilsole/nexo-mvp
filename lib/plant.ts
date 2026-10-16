@@ -1,9 +1,9 @@
 // ─────────────────────────────────────────────────────────────
 // Planta (Lote 5B) — funciones puras, sin importes.
-// Asignaciones del Jefe de planta, carga de cada operario por día (con la misma regla de
-// horas extra del Lote 4: splitOvertime), rubros pendientes de asignar, desvío de horas
-// (reales vs previstas en la asignación del día y vs estimadas en el presupuesto del rubro)
-// y las alertas de planta. Ver docs/PLANTA_Y_HORAS.md.
+// Asignaciones del Jefe de planta (producto + rubro + operario + día), carga de cada operario por día
+// (misma regla de horas extra del Lote 4: splitOvertime), producto + rubro pendientes de asignar,
+// desvío de horas por producto + rubro (con lo de cada operario) y las alertas de planta.
+// Ver docs/PRODUCCION.md.
 // ─────────────────────────────────────────────────────────────
 import type { Alert, AlertSettings, Operator, Project, RubroId, WorkAssignment } from "@/types";
 import { alertBase, alertResolutionKey } from "./alerts";
@@ -38,35 +38,32 @@ export function workWeek(iso: string): string[] {
   return [0, 1, 2, 3, 4].map((i) => addDays(monday, i));
 }
 
-// ── Horas por rubro del presupuesto ───────────────────────────
-
-/** "(2 operarios × 40 h)" en la descripción de las líneas de mano de obra del Cotizador. */
-const WORKERS_IN_TEXT = /\((\d+) operarios? ×/;
+// ── Lo que pide cada producto ─────────────────────────────────
 
 export interface RubroNeed {
+  projectId: string;
+  itemId: string;
+  itemName: string;
   rubro: RubroId;
-  /** Horas de mano de obra estimadas en el presupuesto (normales + extra). */
+  /** Horas estimadas por el Administrativo para el rubro del producto (toda la cantidad). */
   hours: number;
-  /** Operarios que pidió el Cotizador para el rubro. */
+  /** Operarios que pide el rubro (sin nombre). */
   workers: number;
 }
 
-/** Mano de obra que pidió el presupuesto, por rubro: horas estimadas y cantidad de operarios. */
-export function laborNeeds(project: Pick<Project, "budgetLines">): RubroNeed[] {
-  const map = new Map<RubroId, RubroNeed>();
-  for (const l of project.budgetLines) {
-    if (l.category !== "labor" || !l.rubro || l.quantity === null) continue;
-    const workers = l.workers ?? Number(WORKERS_IN_TEXT.exec(l.description)?.[1] ?? 1);
-    const cur = map.get(l.rubro) ?? { rubro: l.rubro, hours: 0, workers: 0 };
-    map.set(l.rubro, { rubro: l.rubro, hours: round2(cur.hours + l.quantity), workers: Math.max(cur.workers, workers) });
-  }
-  return [...map.values()];
+/** Rubros de cada producto del proyecto: horas estimadas y operarios pedidos. */
+export function productNeeds(project: Pick<Project, "id" | "items">): RubroNeed[] {
+  return project.items.flatMap((i) =>
+    i.rubros.map((r) => ({ projectId: project.id, itemId: i.id, itemName: i.name, rubro: r.rubro, hours: r.hours, workers: r.workers })),
+  );
 }
 
 // ── Asignaciones y carga por día ──────────────────────────────
 
 export interface AssignmentInput {
   projectId: string;
+  /** Producto del proyecto. */
+  itemId: string;
   rubro: RubroId;
   operatorId: string;
   date: string;
@@ -78,6 +75,9 @@ export function assignmentError(input: AssignmentInput, ctx: { projects: Project
   const project = ctx.projects.find((p) => p.id === input.projectId);
   if (!project) return "Elegí un proyecto.";
   if (!isAssignable(project)) return "Solo se asignan proyectos entre Aprobado e Instalación.";
+  const item = project.items.find((i) => i.id === input.itemId);
+  if (!item) return "Elegí un producto del proyecto.";
+  if (!item.rubros.some((r) => r.rubro === input.rubro)) return `${item.name} no tiene ese rubro: elegí uno de sus rubros.`;
   const operator = ctx.operators.find((o) => o.id === input.operatorId);
   if (!operator) return "Elegí un operario.";
   if (!operator.active) return `${operator.name} está dado de baja.`;
@@ -85,6 +85,16 @@ export function assignmentError(input: AssignmentInput, ctx: { projects: Project
   if (!(input.plannedHours > 0)) return "Las horas previstas tienen que ser mayores a cero.";
   if (input.plannedHours > 24) return "Un día tiene 24 h.";
   return null;
+}
+
+/** Días hábiles (lunes a viernes) entre `from` y `to`, inclusive. Máximo 60 días para no crear de más por error. */
+export function workdaysBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let d = from; d <= to && out.length < 60; d = addDays(d, 1)) {
+    const dow = utc(d).getUTCDay();
+    if (dow !== 0 && dow !== 6) out.push(d);
+  }
+  return out;
 }
 
 export interface DayLoad {
@@ -108,29 +118,41 @@ export interface PendingRubro {
   projectCode: string;
   projectName: string;
   dueDate: string;
+  itemId: string;
+  itemName: string;
   rubro: RubroId;
+  hours: number;
   workers: number;
+  /** Operarios distintos asignados a ese producto y rubro (cualquier día). */
   assigned: number;
   missing: number;
   daysLeft: number;
 }
 
 /**
- * Rubros donde el Cotizador pidió N operarios y hay menos asignados (desde hoy en adelante),
- * con prioridad por fecha de entrega.
+ * "Pendientes de asignar": producto + rubro donde se pidieron N operarios y hay menos personas asignadas.
+ * Los productos terminados no cuentan. Cuando todo está asignado, la lista queda vacía.
+ * Primero lo que se entrega antes.
  */
 export function pendingAssignments(projects: Project[], assignments: WorkAssignment[], today: string): PendingRubro[] {
   const out: PendingRubro[] = [];
   for (const p of projects.filter(isAssignable)) {
-    for (const need of laborNeeds(p)) {
-      const assigned = new Set(assignments.filter((a) => a.projectId === p.id && a.rubro === need.rubro && a.date >= today).map((a) => a.operatorId)).size;
+    for (const need of productNeeds(p)) {
+      const item = p.items.find((i) => i.id === need.itemId);
+      if (item && item.completedUnits >= item.quantity) continue;
+      const assigned = new Set(
+        assignments.filter((a) => a.projectId === p.id && a.itemId === need.itemId && a.rubro === need.rubro).map((a) => a.operatorId),
+      ).size;
       if (assigned >= need.workers) continue;
       out.push({
         projectId: p.id,
         projectCode: p.code,
         projectName: p.name,
         dueDate: p.dueDate,
+        itemId: need.itemId,
+        itemName: need.itemName,
         rubro: need.rubro,
+        hours: need.hours,
         workers: need.workers,
         assigned,
         missing: need.workers - assigned,
@@ -138,7 +160,7 @@ export function pendingAssignments(projects: Project[], assignments: WorkAssignm
       });
     }
   }
-  return out.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.projectCode.localeCompare(b.projectCode));
+  return out.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.projectCode.localeCompare(b.projectCode) || a.itemName.localeCompare(b.itemName));
 }
 
 // ── Desvío de horas ───────────────────────────────────────────
@@ -181,84 +203,85 @@ const recordOf = (e: Project["actualEntries"][number]): HoursRecord => ({
   hours: e.labor?.hours ?? 0,
 });
 
-export interface DayDeviation {
-  date: string;
+/** Cómo le fue a un operario en un producto + rubro: horas previstas en sus asignaciones vs las que cargó. */
+export type OperatorVerdict = "met" | "over" | "short" | "not_started";
+
+export const VERDICT_LABELS: Record<OperatorVerdict, string> = {
+  met: "Cumplió",
+  over: "Se pasó",
+  short: "Quedó corto",
+  not_started: "Todavía no cargó",
+};
+
+export interface OperatorWork {
   operatorId: string;
-  projectId: string;
-  rubro: RubroId;
+  /** Previstas en las asignaciones que ya pasaron (las de hoy, solo si ya cargó). */
   planned: number;
+  /** Previstas de hoy en adelante, todavía sin cargar. */
+  upcoming: number;
   actual: number;
-  over: number;
-  pct: number | null;
-  flagged: boolean;
-  records: HoursRecord[];
-  assignmentIds: string[];
+  /** Horas de más (positivo) o de menos (negativo) contra lo previsto. */
+  diff: number;
+  verdict: OperatorVerdict;
 }
 
-/** Por asignación del día: horas previstas vs horas cargadas ese día por ese operario en ese proyecto y rubro. */
-export function dayDeviations(projects: Project[], assignments: WorkAssignment[], t: Threshold): DayDeviation[] {
-  const groups = new Map<string, WorkAssignment[]>();
-  for (const a of assignments) {
-    const k = [a.date, a.operatorId, a.projectId, a.rubro].join("|");
-    groups.set(k, [...(groups.get(k) ?? []), a]);
-  }
-  const out: DayDeviation[] = [];
-  for (const list of groups.values()) {
-    const { date, operatorId, projectId, rubro } = list[0];
-    const project = projects.find((p) => p.id === projectId);
-    if (!project) continue;
-    const ids = new Set(list.map((a) => a.id));
-    const entries = laborEntries(project).filter(
-      (e) => (e.assignmentId && ids.has(e.assignmentId)) || (!e.assignmentId && e.date === date && e.operatorId === operatorId && e.rubro === rubro),
-    );
-    if (entries.length === 0) continue; // todavía no cargó: no es un desvío
-    const planned = round2(list.reduce((s, a) => s + a.plannedHours, 0));
-    const actual = round2(entries.reduce((s, e) => s + (e.labor?.hours ?? 0), 0));
-    out.push({
-      date,
-      operatorId,
-      projectId,
-      rubro,
-      planned,
-      actual,
-      over: round2(actual - planned),
-      pct: overPct(planned, actual),
-      flagged: exceeds(planned, actual, t),
-      records: entries.map(recordOf),
-      assignmentIds: list.map((a) => a.id),
-    });
-  }
-  return out.sort((a, b) => b.date.localeCompare(a.date));
+/** Margen para considerar que cumplió (redondeos de carga). */
+const TOLERANCE = 0.01;
+
+export function operatorVerdict(planned: number, actual: number): OperatorVerdict {
+  if (planned <= 0 && actual <= 0) return "not_started";
+  if (actual > planned + TOLERANCE) return "over";
+  if (actual < planned - TOLERANCE) return "short";
+  return "met";
 }
 
-export interface RubroHours {
+export interface ProductRubroHours {
   projectId: string;
-  rubro: RubroId | null;
-  /** Estimadas en el presupuesto (0 si el rubro no tenía mano de obra). */
+  itemId: string;
+  itemName: string;
+  rubro: RubroId;
+  /** Estimadas para el producto y rubro (toda la cantidad). */
   estimated: number;
   actual: number;
   over: number;
   pct: number | null;
+  /** Supera la estimación por el umbral de Configuración → Alertas. */
   flagged: boolean;
+  workers: number;
+  operators: OperatorWork[];
   records: HoursRecord[];
 }
 
-/** Acumulado por rubro: horas estimadas en el presupuesto vs horas reales cargadas. Sin rubro → `rubro: null`. */
-export function rubroHours(project: Project, t: Threshold): RubroHours[] {
-  const needs = laborNeeds(project);
-  const keys = new Set<RubroId | null>([...needs.map((n) => n.rubro), ...laborEntries(project).map((e) => e.rubro ?? null)]);
-  return [...keys].map((rubro) => {
-    const estimated = needs.find((n) => n.rubro === rubro)?.hours ?? 0;
-    const entries = laborEntries(project).filter((e) => (e.rubro ?? null) === rubro);
+/**
+ * Por producto + rubro: horas estimadas vs cargadas, y por cada operario asignado, previstas vs cargadas.
+ * Cada número sale de registros concretos (`records`).
+ */
+export function productRubroHours(project: Project, assignments: WorkAssignment[], t: Threshold, today: string): ProductRubroHours[] {
+  return productNeeds(project).map((need) => {
+    const entries = laborEntries(project).filter((e) => e.itemId === need.itemId && e.rubro === need.rubro);
+    const mine = assignments.filter((a) => a.projectId === project.id && a.itemId === need.itemId && a.rubro === need.rubro);
     const actual = round2(entries.reduce((s, e) => s + (e.labor?.hours ?? 0), 0));
+    const operatorIds = [...new Set([...mine.map((a) => a.operatorId), ...entries.map((e) => e.operatorId).filter((x): x is string => !!x)])];
+    const operators = operatorIds.map((operatorId): OperatorWork => {
+      const loggedOn = (a: WorkAssignment) => entries.some((e) => e.assignmentId === a.id);
+      const theirs = mine.filter((a) => a.operatorId === operatorId);
+      const planned = round2(theirs.filter((a) => a.date < today || (a.date === today && loggedOn(a))).reduce((s, a) => s + a.plannedHours, 0));
+      const upcoming = round2(theirs.filter((a) => a.date > today || (a.date === today && !loggedOn(a))).reduce((s, a) => s + a.plannedHours, 0));
+      const done = round2(entries.filter((e) => e.operatorId === operatorId).reduce((s, e) => s + (e.labor?.hours ?? 0), 0));
+      return { operatorId, planned, upcoming, actual: done, diff: round2(done - planned), verdict: operatorVerdict(planned, done) };
+    });
     return {
       projectId: project.id,
-      rubro,
-      estimated,
+      itemId: need.itemId,
+      itemName: need.itemName,
+      rubro: need.rubro,
+      estimated: need.hours,
       actual,
-      over: round2(actual - estimated),
-      pct: overPct(estimated, actual),
-      flagged: rubro !== null && estimated > 0 && exceeds(estimated, actual, t),
+      over: round2(actual - need.hours),
+      pct: overPct(need.hours, actual),
+      flagged: need.hours > 0 && exceeds(need.hours, actual, t),
+      workers: need.workers,
+      operators,
       records: entries.map(recordOf),
     };
   });
@@ -291,38 +314,19 @@ export function plantAlerts(ctx: PlantContext): Alert[] {
   const byId = new Map(ctx.projects.map((p) => [p.id, p]));
   const alerts: Alert[] = [];
 
-  for (const d of dayDeviations(ctx.projects, ctx.assignments, t)) {
-    const p = byId.get(d.projectId);
-    if (!p || !d.flagged) continue;
-    alerts.push(
-      withKey(
-        {
-          ...alertBase(p),
-          id: `${p.id}:hours-day:${d.operatorId}:${d.date}:${d.rubro}`,
-          kind: "hours",
-          level: "warning",
-          title: `${name(d.operatorId)} trabajó ${formatNumber(d.over)} h más de lo previsto en ${rubroLabel(d.rubro)}`,
-          message: `El ${formatDate(d.date)} se previeron ${formatNumber(d.planned)} h y se cargaron ${formatNumber(d.actual)} h (+${formatNumber(d.over)} h${signedPct(d.pct)}).`,
-          records: d.records.map(describe),
-        },
-        p,
-        ctx.today,
-      ),
-    );
-  }
-
   for (const p of ctx.projects.filter((x) => !x.isClosed && x.status !== "quotation")) {
-    for (const r of rubroHours(p, t)) {
-      if (!r.flagged || r.rubro === null) continue;
+    for (const r of productRubroHours(p, ctx.assignments, t, ctx.today)) {
+      if (!r.flagged) continue;
+      const who = r.operators.filter((o) => o.actual > 0).map((o) => `${name(o.operatorId)} ${formatNumber(o.actual)} h${o.verdict === "over" ? ` (+${formatNumber(o.diff)} h sobre lo asignado)` : ""}`);
       alerts.push(
         withKey(
           {
             ...alertBase(p),
-            id: `${p.id}:hours-rubro:${r.rubro}:${Math.round(r.actual)}`,
+            id: `${p.id}:hours:${r.itemId}:${r.rubro}:${Math.round(r.actual)}`,
             kind: "hours",
             level: (r.pct ?? 0) >= 2 * t.pct ? "critical" : "warning",
-            title: `${rubroLabel(r.rubro)}: ${formatNumber(r.over)} h por encima de lo estimado`,
-            message: `El presupuesto estimó ${formatNumber(r.estimated)} h y ya se cargaron ${formatNumber(r.actual)} h (+${formatNumber(r.over)} h${signedPct(r.pct)}).`,
+            title: `${r.itemName} · ${rubroLabel(r.rubro)}: ${formatNumber(r.over)} h por encima de lo estimado`,
+            message: `Se estimaron ${formatNumber(r.estimated)} h y se cargaron ${formatNumber(r.actual)} h (+${formatNumber(r.over)} h${signedPct(r.pct)}). Operarios: ${who.join(", ")}.`,
             records: r.records.map(describe),
           },
           p,
@@ -365,11 +369,11 @@ export function plantAlerts(ctx: PlantContext): Alert[] {
       withKey(
         {
           ...alertBase(p),
-          id: `${p.id}:unassigned:${r.rubro}`,
+          id: `${p.id}:unassigned:${r.itemId}:${r.rubro}`,
           kind: "unassigned",
           level: r.daysLeft < 0 ? "critical" : "warning",
-          title: `${rubroLabel(r.rubro)} sin operarios asignados`,
-          message: `El presupuesto pide ${r.workers} ${r.workers === 1 ? "operario" : "operarios"} y hay ${r.assigned} asignado${r.assigned === 1 ? "" : "s"}. ${
+          title: `${r.itemName} · ${rubroLabel(r.rubro)}: faltan operarios`,
+          message: `Se piden ${r.workers} ${r.workers === 1 ? "operario" : "operarios"} y hay ${r.assigned} asignado${r.assigned === 1 ? "" : "s"}. ${
             r.daysLeft < 0 ? `La entrega venció hace ${-r.daysLeft} días.` : `Faltan ${r.daysLeft} días para la entrega.`
           }`,
         },

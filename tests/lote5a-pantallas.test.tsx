@@ -50,7 +50,7 @@ const menuItems = () => {
 describe("menú y acceso por rol", () => {
   it("Administrativo ve su menú completo y la demo ofrece los 4 roles", () => {
     render(<AppShell>contenido</AppShell>);
-    expect(menuItems()).toEqual(["Dashboard", "Proyectos", "Alertas", "Horas", "Cotizador", "Historial", "Stock", "Operarios", "Configuración"]);
+    expect(menuItems()).toEqual(["Dashboard", "Proyectos", "Alertas", "Horas", "Cotizador", "Stock", "Operarios", "Configuración"]);
     const group = screen.getAllByRole("radiogroup", { name: "Ver la demo como" })[0];
     expect(within(group).getAllByRole("radio").map((r) => r.textContent)).toEqual(["Administrativo", "Compras", "Jefe de planta", "Operario"]);
     expect(screen.getByText("contenido")).toBeInTheDocument();
@@ -148,8 +148,11 @@ describe("horas con el costo vigente ese día (store)", () => {
     // Juan pasa de 15.000 a 20.000 desde hace 5 días.
     expect(s.updateOperator("op-juan", { name: "Juan Pérez", role: "Carpintería", hourlyCost: 20_000 }, daysAgo(5)).ok).toBe(true);
     expect(useAppStore.getState().operators.find((o) => o.id === "op-juan")?.hourlyCost).toBe(20_000);
-    expect(s.logHours(project.id, { operatorId: "op-juan", date: daysAgo(8), hours: 1, workType: "Armado" }).ok).toBe(true);
-    expect(s.logHours(project.id, { operatorId: "op-juan", date: daysAgo(2), hours: 1, workType: "Armado" }).ok).toBe(true);
+    // Carga manual del Administrativo: crea la asignación del día y carga contra ella.
+    const manual = (date: string) => ({ operatorId: "op-juan", itemId: project.items[0].id, rubro: project.items[0].rubros[0].rubro, date, hours: 1 });
+    expect(s.logHoursManual(project.id, manual(daysAgo(8)))).toMatchObject({ ok: true });
+    expect(s.logHoursManual(project.id, manual(daysAgo(2)))).toMatchObject({ ok: true });
+    expect(useAppStore.getState().assignments.filter((a) => a.projectId === project.id && a.plannedHours === 1)).toHaveLength(2);
     const after = useAppStore.getState().projects.find((p) => p.id === project.id)!.actualEntries;
     expect(after.slice(0, before.length).map((e) => e.amount)).toEqual(before);
     expect(after.slice(-2).map((e) => [e.amount, e.labor?.hourlyCost])).toEqual([

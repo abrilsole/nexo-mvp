@@ -223,7 +223,7 @@ export function overBudgetPurchases(projects: Project[]): OverBudgetPurchase[] {
 export interface PurchasingContext {
   projects: Project[];
   statuses: PurchaseLineStatus[];
-  settings: Pick<AlertSettings, "purchaseLeadDays" | "categoryCriticalPct">;
+  settings: Pick<AlertSettings, "purchaseLeadDays" | "categoryWarningPct" | "categoryCriticalPct">;
   today: string;
 }
 
@@ -255,7 +255,8 @@ export function purchasingAlerts(ctx: PurchasingContext): Alert[] {
   }
   for (const o of overBudgetPurchases(ctx.projects)) {
     const p = byId.get(o.projectId);
-    if (!p) continue;
+    // Una diferencia chica de precio no es una alerta: avisa desde el % de Atención (Configuración → Alertas).
+    if (!p || o.pct < ctx.settings.categoryWarningPct) continue;
     const level: AlertLevel = o.pct >= ctx.settings.categoryCriticalPct ? "critical" : "warning";
     const id = `${p.id}:purchase-cost:${o.purchaseId}`;
     alerts.push({

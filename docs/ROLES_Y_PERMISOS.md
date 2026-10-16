@@ -27,16 +27,16 @@ Blerp pasó de dos experiencias (Gestión y Taller) a **cuatro roles**. El Lote 
 | Proyectos (código, nombre, cliente, etapa, fechas) | Sí | Sí | Sí | Solo los suyos, en ejecución |
 | Operarios y asignaciones | Sí | **No** | Sí (sin costo) | Solo su nombre |
 | Horas cargadas | Sí (con valor) | **No** | Sí (sin valor) | Solo las suyas (sin valor) |
-| Cargar horas y consumos | Sí | — | Asigna (no carga horas) | Sus propias horas y consumos |
+| Cargar horas y consumos | Sí (crea la asignación) | — | Asigna y carga unidades terminadas | Sus horas, solo contra sus asignaciones |
 | Usuarios y Configuración | Sí | **No** | **No** | **No** |
 | Corregir valores congelados | Sí | **No** | **No** | **No** |
 
 **Menú de cada rol** (el mismo mapa arma el menú y los guards de ruta; desde el Lote 5B no hay ítems "Próximamente": lo que no está hecho no se muestra):
 
-- **Administrativo:** Dashboard, Proyectos, Alertas, Horas, Cotizador, Historial, Stock, Operarios, Configuración (con la pestaña Usuarios).
+- **Administrativo:** Dashboard, Proyectos, Alertas, Horas, Cotizador, Stock, Operarios, Configuración (con la pestaña Usuarios). Historial se sacó en el Lote 6.
 - **Compras:** Dashboard, Proyectos, Alertas, Cotizador, Historial y Stock (ver `docs/COMPRAS.md`).
 - **Jefe de planta:** Resumen, Proyectos, Operarios, Asignaciones, Alertas (ver `docs/PLANTA_Y_HORAS.md`).
-- **Operario:** Mi día (sus asignaciones del día, carga de horas por rubro y "Otras cargas").
+- **Operario:** Mi día (solo lo asignado para hoy: proyecto, producto, rubro, horas estimadas y un campo de horas). Ver `docs/PRODUCCION.md`.
 
 ## Cómo se hace cumplir
 

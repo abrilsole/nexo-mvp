@@ -1,10 +1,11 @@
 "use client";
-// Crear o editar una asignación: proyecto, rubro, operario, día y horas previstas. Sin importes.
+// Asignar trabajo: proyecto → producto → rubro → operario(s) → días → horas por día. Sin importes.
+// Al crear se pueden elegir varias personas y un rango de días (una asignación por persona y día hábil);
+// al editar se cambia esa sola asignación.
 import { useState } from "react";
 import type { RubroId, WorkAssignment } from "@/types";
 import { activeOperators } from "@/lib/operators";
-import { isAssignable } from "@/lib/plant";
-import { rubroOptions } from "@/lib/my-day";
+import { isAssignable, workdaysBetween } from "@/lib/plant";
 import { rubroLabel } from "@/lib/rubros";
 import { parseDecimal } from "@/lib/schemas";
 import { useAppStore } from "@/store/use-app-store";
@@ -13,12 +14,14 @@ import { Field } from "@/components/ui/field";
 import { Input, Select } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
-export type AssignmentDraft = Partial<Pick<WorkAssignment, "id" | "projectId" | "rubro" | "operatorId" | "date" | "plannedHours">>;
+export type AssignmentDraft = Partial<Pick<WorkAssignment, "id" | "projectId" | "itemId" | "rubro" | "operatorId" | "date" | "plannedHours">>;
 
 export function AssignmentDialog({ draft, onClose }: { draft: AssignmentDraft | null; onClose: () => void }) {
   return (
     <Dialog open={draft !== null} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>{draft && <AssignmentForm key={draft.id ?? `${draft.operatorId}-${draft.date}-${draft.projectId}`} draft={draft} onClose={onClose} />}</DialogContent>
+      <DialogContent>
+        {draft && <AssignmentForm key={draft.id ?? `${draft.operatorId}-${draft.date}-${draft.projectId}-${draft.itemId}-${draft.rubro}`} draft={draft} onClose={onClose} />}
+      </DialogContent>
     </Dialog>
   );
 }
@@ -28,63 +31,104 @@ function AssignmentForm({ draft, onClose }: { draft: AssignmentDraft; onClose: (
   const operators = activeOperators(useAppStore((s) => s.operators));
   const saveAssignment = useAppStore((s) => s.saveAssignment);
   const removeAssignment = useAppStore((s) => s.removeAssignment);
+  const editing = !!draft.id;
   const [projectId, setProjectId] = useState(draft.projectId ?? projects[0]?.id ?? "");
   const project = projects.find((p) => p.id === projectId);
-  const rubros = project ? rubroOptions(project) : [];
+  const [itemId, setItemId] = useState(draft.itemId ?? "");
+  const item = project?.items.find((i) => i.id === itemId) ?? project?.items[0];
   const [rubro, setRubro] = useState<RubroId | "">(draft.rubro ?? "");
-  const chosenRubro = rubro && rubros.includes(rubro) ? rubro : (rubros[0] ?? "");
-  const [operatorId, setOperatorId] = useState(draft.operatorId ?? operators[0]?.id ?? "");
-  const [date, setDate] = useState(draft.date ?? "");
-  const [hours, setHours] = useState(draft.plannedHours ? String(draft.plannedHours).replace(".", ",") : "");
+  const chosenRubro = item?.rubros.some((r) => r.rubro === rubro) ? rubro : (item?.rubros[0]?.rubro ?? "");
+  const need = item?.rubros.find((r) => r.rubro === chosenRubro);
+  const [picked, setPicked] = useState<string[]>(draft.operatorId ? [draft.operatorId] : []);
+  const [from, setFrom] = useState(draft.date ?? "");
+  const [to, setTo] = useState(draft.date ?? "");
+  const [hours, setHours] = useState(draft.plannedHours ? String(draft.plannedHours).replace(".", ",") : "8");
   const [error, setError] = useState("");
+  const days = editing ? (from ? [from] : []) : from && to ? workdaysBetween(from, to) : [];
+
+  const toggle = (id: string) => (editing ? setPicked([id]) : setPicked(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]));
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chosenRubro) return setError("Elegí el rubro.");
-    const r = saveAssignment({ id: draft.id, projectId, rubro: chosenRubro, operatorId, date, plannedHours: parseDecimal(hours) });
-    if (!r.ok) return setError(r.error);
+    if (!item || !chosenRubro) return setError("Elegí el producto y el rubro.");
+    if (picked.length === 0) return setError("Elegí al menos un operario.");
+    if (days.length === 0) return setError(editing ? "Elegí el día." : "Elegí desde y hasta qué día (días hábiles).");
+    for (const operatorId of picked) {
+      for (const date of days) {
+        const r = saveAssignment({ id: draft.id, projectId, itemId: item.id, rubro: chosenRubro, operatorId, date, plannedHours: parseDecimal(hours) });
+        if (!r.ok) return setError(r.error);
+      }
+    }
     onClose();
   };
 
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{draft.id ? "Editar asignación" : "Nueva asignación"}</DialogTitle>
-        <DialogDescription>El operario la ve precargada en &quot;Mi día&quot; y solo confirma o corrige las horas.</DialogDescription>
+        <DialogTitle>{editing ? "Editar asignación" : "Asignar trabajo"}</DialogTitle>
+        <DialogDescription>Cada persona lo ve en &quot;Mi día&quot; con las horas estimadas y solo carga las horas que trabajó.</DialogDescription>
       </DialogHeader>
       <form onSubmit={save} noValidate className="space-y-4">
         <Field label="Proyecto" htmlFor="as-project">
-          <Select id="as-project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+          <Select id="as-project" value={projectId} onChange={(e) => { setProjectId(e.target.value); setItemId(""); }}>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>{p.code} · {p.name}</option>
             ))}
           </Select>
         </Field>
-        <Field label="Rubro" htmlFor="as-rubro">
-          <Select id="as-rubro" value={chosenRubro} onChange={(e) => setRubro(e.target.value as RubroId)}>
-            {rubros.map((r) => (
-              <option key={r} value={r}>{rubroLabel(r)}</option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Operario" htmlFor="as-operator">
-          <Select id="as-operator" value={operatorId} onChange={(e) => setOperatorId(e.target.value)}>
-            {operators.map((o) => (
-              <option key={o.id} value={o.id}>{o.name} · {o.role}</option>
-            ))}
-          </Select>
-        </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Día" htmlFor="as-date">
-            <Input id="as-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <Field label="Producto" htmlFor="as-item">
+            <Select id="as-item" value={item?.id ?? ""} onChange={(e) => setItemId(e.target.value)}>
+              {(project?.items ?? []).map((i) => (
+                <option key={i.id} value={i.id}>{i.name} × {i.quantity}</option>
+              ))}
+            </Select>
           </Field>
-          <Field label="Horas previstas" htmlFor="as-hours">
+          <Field label="Rubro" htmlFor="as-rubro">
+            <Select id="as-rubro" value={chosenRubro} onChange={(e) => setRubro(e.target.value as RubroId)}>
+              {(item?.rubros ?? []).map((r) => (
+                <option key={r.rubro} value={r.rubro}>{rubroLabel(r.rubro)}</option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+        {need && (
+          <p className="text-xs text-slate-500">
+            Estimado: {need.hours} h en total · pide {need.workers} {need.workers === 1 ? "operario" : "operarios"}.
+          </p>
+        )}
+        <fieldset>
+          <legend className="mb-1 text-sm font-medium text-slate-700">{editing ? "Operario" : "Operarios"}</legend>
+          <div className="grid gap-1.5 sm:grid-cols-2">
+            {operators.map((o) => (
+              <label key={o.id} className="flex cursor-pointer items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-sm has-[:checked]:border-blue-400 has-[:checked]:bg-blue-50">
+                <input type={editing ? "radio" : "checkbox"} name="as-operator" checked={picked.includes(o.id)} onChange={() => toggle(o.id)} className="size-4" />
+                <span className="min-w-0 break-words">{o.name} <span className="text-xs text-slate-500">· {o.role}</span></span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <div className="grid grid-cols-3 gap-3">
+          <Field label={editing ? "Día" : "Desde"} htmlFor="as-from">
+            <Input id="as-from" type="date" value={from} onChange={(e) => { setFrom(e.target.value); if (!to || to < e.target.value) setTo(e.target.value); }} />
+          </Field>
+          {!editing && (
+            <Field label="Hasta" htmlFor="as-to">
+              <Input id="as-to" type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} />
+            </Field>
+          )}
+          <Field label="Horas por día" htmlFor="as-hours">
             <Input id="as-hours" inputMode="decimal" value={hours} onChange={(e) => setHours(e.target.value)} />
           </Field>
         </div>
+        {!editing && days.length > 0 && picked.length > 0 && (
+          <p className="text-xs text-slate-600">
+            Se crean {days.length * picked.length} asignaciones ({picked.length} {picked.length === 1 ? "persona" : "personas"} × {days.length} días hábiles).
+          </p>
+        )}
         {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
         <DialogFooter className="gap-2">
-          {draft.id && (
+          {editing && (
             <Button
               type="button"
               variant="ghost"

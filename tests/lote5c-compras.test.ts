@@ -19,6 +19,9 @@ import {
 
 const seed = buildSeed(new Date("2026-10-15T12:00:00"));
 const today = "2026-10-15";
+/** Id de la línea de materiales de un proyecto del seed (por material o descripción). */
+const lineId = (projectId: string, match: string) =>
+  seed.projects.find((p) => p.id === projectId)!.budgetLines.find((l) => l.category === "materials" && (l.materialId === match || l.description.startsWith(match)))!.id;
 const status = (projectId: string, lineId: string, s: PurchaseLineStatus["status"]): PurchaseLineStatus => ({ projectId, lineId, status: s, updatedBy: "x", updatedAt: "" });
 
 function keysDeep(v: unknown, out = new Set<string>()): Set<string> {
@@ -43,16 +46,16 @@ describe("estado de una línea", () => {
 });
 
 describe("líneas de materiales de los proyectos abiertos", () => {
-  const lines = purchaseLines(seed.projects, [status("p-1053", "bl-0407", "quoting")], today);
+  const lines = purchaseLines(seed.projects, [status("p-1053", lineId("p-1053", "perfil-alu"), "quoting")], today);
   it("solo proyectos abiertos y solo materiales, con lo comprado y lo que falta", () => {
     expect(new Set(lines.map((l) => l.projectId))).toEqual(new Set(seed.projects.filter((p) => !p.isClosed).map((p) => p.id)));
-    const mel = lines.find((l) => l.projectId === "p-1053" && l.lineId === "bl-0404")!;
+    const mel = lines.find((l) => l.projectId === "p-1053" && l.lineId === lineId("p-1053", "mel-blanca-18"))!;
     expect(mel).toMatchObject({ needed: 30, purchased: 32, remaining: 0, status: "purchased" });
-    const alu = lines.find((l) => l.lineId === "bl-0407")!;
+    const alu = lines.find((l) => l.lineId === lineId("p-1053", "perfil-alu"))!;
     expect(alu).toMatchObject({ purchased: 0, remaining: 60, status: "quoting", needBy: "2026-10-10", daysLeft: -5 });
   });
   it("un monto directo cuenta como 1 unidad por su monto", () => {
-    const paint = lines.find((l) => l.lineId === "bl-0410")!;
+    const paint = lines.find((l) => l.lineId === lineId("p-1053", "Pintura"))!;
     expect(paint).toMatchObject({ quantity: null, needed: 1, budgetUnitCost: 500_000 });
   });
   it("lo pagado de más contra el presupuesto", () => {
