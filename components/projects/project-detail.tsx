@@ -4,12 +4,13 @@ import { useState } from "react";
 import { ArrowRightLeft, ClipboardPen, FolderX, Lock, ShoppingCart } from "lucide-react";
 import { formatDate, formatDays, daysBetween, todayISO } from "@/lib/formatting";
 import { useAppStore } from "@/store/use-app-store";
-import { useProjectAlerts, useProjectView } from "@/store/selectors";
+import { useMaterialsStateOf, useProjectAlerts, useProjectView } from "@/store/selectors";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { HealthBadge, StatusBadge } from "@/components/shared/badges";
+import { MaterialsBadge } from "@/components/purchasing/purchasing-projects";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusTimeline } from "./status-timeline";
 import { EconomicSummary } from "./economic-summary";
@@ -37,6 +38,7 @@ export function ProjectDetail({ id, tab: initialTab, purchase }: { id: string; t
   const view = useProjectView(id);
   const settings = useAppStore((s) => s.settings);
   const alerts = useProjectAlerts(view?.project);
+  const materialsOf = useMaterialsStateOf();
   const [dialog, setDialog] = useState<DialogName>(null);
   const [tab, setTab] = useState<string>(TABS.includes(initialTab as (typeof TABS)[number]) ? (initialTab as string) : purchase ? "materials" : "summary");
 
@@ -70,6 +72,7 @@ export function ProjectDetail({ id, tab: initialTab, purchase }: { id: string; t
               <span className="font-medium">{p.code}</span>
               <StatusBadge status={p.status} />
               {health && <HealthBadge health={health} />}
+              <MaterialsBadge state={materialsOf(p)} />
             </div>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">{p.name}</h1>
             <p className="mt-1 text-sm text-slate-500">

@@ -18,8 +18,7 @@ import type {
   Operator,
   PriceRecord,
   Project,
-  PurchaseLineStatus,
-  LineStatus,
+  PurchaseOrder,
   ProjectStatus,
   RubroId,
   StockLot,
@@ -42,9 +41,17 @@ import { lotToRow } from "@/lib/supabase/mappers";
 import * as remote from "@/lib/supabase/workspace";
 import { DEFAULT_COST_SETTINGS, type Workspace, type WorkspaceData } from "@/lib/supabase/workspace";
 import { tallerCalls } from "@/lib/supabase/taller";
-import { comprasPayload } from "@/lib/supabase/compras";
-import { lineStatusToParams } from "@/lib/supabase/mappers";
-import { recordPurchaseError, type RecordPurchaseInput } from "@/lib/purchasing";
+import {
+  invoiceActivity,
+  invoiceEntries,
+  invoiceError,
+  nextOrderNumber,
+  orderDraftError,
+  receiveOrder as receiveOrderLines,
+  type InvoiceInput,
+  type OrderDraft,
+  type ReceiptInput,
+} from "@/lib/purchasing";
 import { todayISO } from "@/lib/formatting";
 import { hourRatesAt, laborCostAt, OVERTIME_SUBJECT, priceChange, priceChangeError, valueAt } from "@/lib/price-history";
 import { applyCorrection, correctionError, type CorrectionInput } from "@/lib/corrections";
@@ -59,7 +66,8 @@ interface AppState {
   /** Asignaciones del Jefe de planta (Lote 5B). */
   assignments: WorkAssignment[];
   /** Estado de compra de las líneas de materiales (Lote 5C). */
-  lineStatuses: PurchaseLineStatus[];
+  /** Órdenes de compra (Lote 6). Las ven Administrativo y Compras. */
+  orders: PurchaseOrder[];
   operators: Operator[];
   stock: StockState;
   requests: MaterialRequest[];
@@ -184,10 +192,15 @@ interface AppState {
   saveAssignment: (input: AssignmentInput & { id?: string }) => Result<string>;
   /** Quita una asignación. */
   removeAssignment: (id: string) => Result;
-  /** Estado de compra de una línea de materiales (Compras o Administrativo). */
-  setLineStatus: (projectId: string, lineId: string, status: LineStatus) => Result;
-  /** Compra real de una o varias líneas del mismo material: precio pagado, proveedor y fecha. Las deja en "Comprado". */
-  recordPurchase: (input: RecordPurchaseInput) => Result;
+  /** Crea (sin id) o modifica una orden en Borrador. Devuelve el id. Compras o Administrativo. */
+  saveOrder: (draft: OrderDraft & { id?: string }) => Result<string>;
+  sendOrder: (id: string) => Result;
+  /** Facturada: crea las compras reales (desde acá cambia el costo real de materiales del proyecto). */
+  invoiceOrder: (id: string, invoice: InvoiceInput) => Result;
+  /** Pagada sí/no: información financiera, no cambia costos. */
+  setOrderPaid: (id: string, paid: boolean) => Result;
+  /** Recibe cantidades: el material entra al proyecto. */
+  receiveOrder: (id: string, receipts: ReceiptInput[]) => Result;
   /** Corrige un valor congelado (proyecto aprobado o cerrado) con motivo: queda registrado. */
   correctValue: (projectId: string, input: CorrectionInput) => Promise<Result>;
   /** Reemplaza los datos de la empresa por la demo de Madera Sur. */
@@ -216,7 +229,7 @@ export function demoData(): WorkspaceData {
   return {
     projects: seed.projects,
     assignments: seed.assignments,
-    lineStatuses: seed.lineStatuses,
+    orders: seed.orders,
     operators: seed.operators,
     stock: seed.stock,
     requests: [],
@@ -228,7 +241,7 @@ export function demoData(): WorkspaceData {
 const EMPTY_DATA: WorkspaceData = {
   projects: [],
   assignments: [],
-  lineStatuses: [],
+  orders: [],
   operators: [],
   stock: EMPTY_STOCK,
   requests: [],
@@ -303,20 +316,11 @@ export const useAppStore = create<AppState>()(
         const stock = next.stock ?? prev.stock;
         const operators = next.operators ?? prev.operators;
         const requests = next.requests ?? prev.requests;
-        if (prev.role === "jefe_planta" || (prev.role === "compras" && operators !== prev.operators)) {
+        // Compras escribe solo órdenes de compra (con sus funciones) y el stock es solo consulta; el Jefe de planta, asignaciones.
+        if (prev.role === "jefe_planta" || prev.role === "compras") {
           throw new ops.DomainError("Con tu rol no se cargan estos datos en Blerp.");
         }
         set({ projects, stock, operators, requests });
-        if (prev.role === "compras") {
-          // Compras no escribe tablas: lo nuevo va a compras_save (la base valida y calcula el total).
-          const payload = comprasPayload(
-            { projects: prev.projects, stock: prev.stock, requests: prev.requests },
-            { projects, stock, requests },
-            prev.organizationId ?? "",
-          );
-          if (payload) void persistRemote((db) => remote.comprasSave(db, payload));
-          return;
-        }
         if (prev.role === "operator") {
           // Taller no escribe tablas: cada registro nuevo va a su función del servidor (que calcula los costos).
           const calls = tallerCalls({ projects: prev.projects, stock: prev.stock, requests: prev.requests }, { projects, stock, requests }, prev.organizationId ?? "");
@@ -353,20 +357,6 @@ export const useAppStore = create<AppState>()(
         if (!isManager(effectiveIdentity(get()).role)) throw new ops.DomainError(`${what} lo hace un usuario Administrativo.`);
       };
 
-      const requireBuyer = (what: string) => {
-        if (!isBuyer(effectiveIdentity(get()).role)) throw new ops.DomainError(`${what} lo hace Compras o un usuario Administrativo.`);
-      };
-
-      /** Guarda estados de línea (en memoria y con compras_save, la misma función para Compras y Administrativo). */
-      const setStatuses = (changes: Array<Pick<PurchaseLineStatus, "projectId" | "lineId" | "status">>) => {
-        if (changes.length === 0) return;
-        const meta = { updatedBy: effectiveIdentity(get()).actor, updatedAt: new Date().toISOString() };
-        const same = (a: Pick<PurchaseLineStatus, "projectId" | "lineId">, b: Pick<PurchaseLineStatus, "projectId" | "lineId">) =>
-          a.projectId === b.projectId && a.lineId === b.lineId;
-        const rest = get().lineStatuses.filter((s) => !changes.some((c) => same(s, c)));
-        set({ lineStatuses: [...rest, ...changes.map((c) => ({ ...c, ...meta }))] });
-        void persistRemote((db) => remote.comprasSave(db, { line_statuses: changes.map(lineStatusToParams) }));
-      };
 
       /** Aplica una operación pura sobre un proyecto. */
       const mutate = (id: string, fn: (p: Project) => Project): Result =>
@@ -384,6 +374,15 @@ export const useAppStore = create<AppState>()(
           commit({ projects: res.projects, stock: res.stock });
           return undefined;
         });
+
+      /** Órdenes de compra: Compras o Administrativo (la base valida lo mismo). */
+      const findOrder = (id: string): PurchaseOrder => {
+        if (!isBuyer(effectiveIdentity(get()).role)) throw new ops.DomainError("Las órdenes de compra las maneja Compras o un usuario Administrativo.");
+        const o = get().orders.find((x) => x.id === id);
+        if (!o) throw new ops.DomainError("Orden no encontrada.");
+        return o;
+      };
+      const replaceOrder = (o: PurchaseOrder) => set({ orders: get().orders.map((x) => (x.id === o.id ? o : x)) });
 
       /** Reemplaza todos los datos de la empresa (reset demo / vaciar). Espera a las escrituras previas. */
       const replaceAll = (data: WorkspaceData, isDemo: boolean): Promise<Result> => {
@@ -437,7 +436,7 @@ export const useAppStore = create<AppState>()(
           set({
             projects: ws.projects,
             assignments: ws.assignments,
-            lineStatuses: ws.lineStatuses,
+            orders: ws.orders,
             operators: ws.operators,
             stock: ws.stock,
             requests: ws.requests,
@@ -582,7 +581,7 @@ export const useAppStore = create<AppState>()(
 
         addStockLot: (input) =>
           run(() => {
-            requireBuyer("Registrar compras de stock");
+            requireManager("Registrar compras de stock");
             const c = ctx();
             const received = receiveStock(
               {
@@ -605,15 +604,13 @@ export const useAppStore = create<AppState>()(
 
         updateLotLocation: (lotId, location) =>
           run(() => {
-            requireBuyer("Editar la ubicación");
+            requireManager("Editar la ubicación");
             const stock = get().stock;
             // La ubicación es un dato del lote, no un movimiento: se reemplaza el lote (el ledger no cambia).
             const next = { ...stock, lots: stock.lots.map((l) => (l.id === lotId ? { ...l, location: location.trim() || undefined } : l)) };
             set({ stock: next });
             const lot = next.lots.find((l) => l.id === lotId);
-            if (lot && get().role === "compras") {
-              void persistRemote((db) => remote.comprasSave(db, { lot_locations: [{ id: lot.id, location: lot.location ?? null }] }));
-            } else if (lot) {
+            if (lot) {
               void persistRemote(async (db, org) => {
                 const res = await db.from("stock_lots").upsert(lotToRow(org, lot), { onConflict: "organization_id,id" });
                 if (res.error) throw new Error(res.error.message);
@@ -702,7 +699,7 @@ export const useAppStore = create<AppState>()(
 
         setRequestStatus: (id, status) =>
           run(() => {
-            requireBuyer("Resolver pedidos de material");
+            requireManager("Resolver pedidos de material");
             const now = new Date().toISOString();
             const actor = effectiveIdentity(get()).actor;
             commit({
@@ -798,45 +795,83 @@ export const useAppStore = create<AppState>()(
             void persistRemote((db) => remote.removeAssignment(db, id));
             return undefined;
           }),
-        setLineStatus: (projectId, lineId, status) =>
+        saveOrder: (draft) =>
           run(() => {
-            requireBuyer("Cambiar el estado de compra");
-            const line = find(projectId).budgetLines.find((l) => l.id === lineId && l.category === "materials");
-            if (!line) throw new ops.DomainError("Línea de materiales no encontrada.");
-            setStatuses([{ projectId, lineId, status }]);
+            if (!isBuyer(effectiveIdentity(get()).role)) throw new ops.DomainError("Las órdenes de compra las maneja Compras o un usuario Administrativo.");
+            const error = orderDraftError(draft);
+            if (error) throw new ops.DomainError(error);
+            const previous = draft.id ? findOrder(draft.id) : undefined;
+            if (previous && previous.status !== "draft") throw new ops.DomainError("Solo se modifica una orden en Borrador.");
+            const order: PurchaseOrder = {
+              id: previous?.id ?? createId("oc"),
+              number: previous?.number ?? nextOrderNumber(get().orders),
+              supplier: draft.supplier.trim(),
+              date: draft.date,
+              status: "draft",
+              paid: false,
+              received: "no",
+              notes: draft.notes?.trim() || undefined,
+              lines: draft.lines.map((l) => ({
+                ...l,
+                id: previous?.lines.find((x) => x.projectId === l.projectId && x.budgetLineId === l.budgetLineId)?.id ?? createId("ocl"),
+                receivedQuantity: 0,
+              })),
+              createdBy: previous?.createdBy ?? effectiveIdentity(get()).actor,
+              createdAt: previous?.createdAt ?? new Date().toISOString(),
+            };
+            set({ orders: previous ? get().orders.map((x) => (x.id === order.id ? order : x)) : [...get().orders, order] });
+            void persistRemote((db) => remote.saveOrder(db, order));
+            return order.id;
+          }),
+        sendOrder: (id) =>
+          run(() => {
+            const o = findOrder(id);
+            if (o.status !== "draft") throw new ops.DomainError("Solo se envía una orden en Borrador.");
+            replaceOrder({ ...o, status: "sent" });
+            void persistRemote((db) => remote.orderStatus(db, { id, action: "send" }));
             return undefined;
           }),
-        recordPurchase: (input) =>
+        invoiceOrder: (id, invoice) =>
           run(() => {
-            requireBuyer("Registrar compras");
-            const error = recordPurchaseError(input, todayISO());
+            const o = findOrder(id);
+            const error = invoiceError(o, invoice);
             if (error) throw new ops.DomainError(error);
-            const c = ctx();
-            let { projects, stock } = get();
-            const parts = input.parts.filter((p) => p.quantity > 0);
-            for (const part of parts) {
-              const project = projects.find((p) => p.id === part.projectId);
-              if (!project) throw new ops.DomainError("Proyecto no encontrado.");
-              const res = ops.addPurchase(
-                project,
-                stock,
-                {
-                  materialId: input.materialId,
-                  materialName: input.materialName,
-                  quantity: part.quantity,
-                  unit: input.unit,
-                  unitCost: input.unitCost,
-                  supplier: input.supplier.trim(),
-                  date: input.date,
-                  notes: input.notes,
-                },
-                c,
-              );
-              projects = projects.map((p) => (p.id === project.id ? res.project : p));
-              stock = res.stock;
-            }
-            commit({ projects, stock });
-            setStatuses(parts.map((p) => ({ projectId: p.projectId, lineId: p.lineId, status: "purchased" as const })));
+            const { actor } = effectiveIdentity(get());
+            const now = new Date().toISOString();
+            const entries = invoiceEntries(o, invoice, actor, now);
+            // La base crea lo mismo (mismos ids): se actualiza la memoria sin volver a escribir los proyectos.
+            set({
+              projects: get().projects.map((p) => {
+                const mine = entries.filter((e) => e.projectId === p.id);
+                if (mine.length === 0) return p;
+                const events = invoiceActivity(o, p.id, invoice.invoiceNumber, actor, now, () => createId("act"));
+                return { ...p, updatedAt: now, purchaseEntries: [...p.purchaseEntries, ...mine], activity: [...events, ...p.activity] };
+              }),
+            });
+            replaceOrder({ ...o, status: "invoiced", invoiceNumber: invoice.invoiceNumber.trim(), invoiceAmount: invoice.invoiceAmount, invoiceDate: invoice.invoiceDate });
+            void persistRemote((db) =>
+              remote.orderStatus(db, { id, action: "invoice", invoice_number: invoice.invoiceNumber.trim(), invoice_amount: invoice.invoiceAmount, invoice_date: invoice.invoiceDate }),
+            );
+            return undefined;
+          }),
+        setOrderPaid: (id, paid) =>
+          run(() => {
+            const o = findOrder(id);
+            if (o.status !== "invoiced") throw new ops.DomainError("Solo se marca como pagada una orden Facturada.");
+            replaceOrder({ ...o, paid });
+            void persistRemote((db) => remote.orderStatus(db, { id, action: "paid", paid }));
+            return undefined;
+          }),
+        receiveOrder: (id, receipts) =>
+          run(() => {
+            const o = findOrder(id);
+            const { actor } = effectiveIdentity(get());
+            const res = receiveOrderLines(o, receipts, get().projects, { actor, now: new Date().toISOString(), today: todayISO() });
+            if (res.sent.length === 0) throw new ops.DomainError("Indicá cuánto llegó de cada material.");
+            // La base crea el mismo lote y movimiento: se actualiza la memoria sin volver a escribir el stock.
+            set({ stock: applyChange(get().stock, res.change) });
+            replaceOrder(res.order);
+            void persistRemote((db) => remote.orderStatus(db, { id, action: "receive", receipts: res.sent }));
             return undefined;
           }),
         correctValue: async (projectId, input) => {

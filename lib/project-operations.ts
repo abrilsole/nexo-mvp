@@ -45,7 +45,7 @@ import { materialKey } from "./material-reconciliation";
 import { productInputError, type ProductInput } from "./production";
 import { rubroDef } from "./rubros";
 import { unresolvedMaterial } from "./material-flow";
-import { assertExecutable, assertTransition, checkHours, isBuyer, isManager, RuleError } from "./project-rules";
+import { assertExecutable, assertTransition, checkHours, isManager, RuleError } from "./project-rules";
 import {
   applyChange,
   assignToProject,
@@ -75,10 +75,6 @@ function assertManager(ctx: Ctx, what: string) {
   if (!isManager(roleOf(ctx))) throw new RuleError(`${what} lo hace un usuario Administrativo.`);
 }
 
-/** Compras y stock: Administrativo o Compras. */
-function assertBuyer(ctx: Ctx, what: string) {
-  if (!isBuyer(roleOf(ctx))) throw new RuleError(`${what} lo hace Compras o un usuario Administrativo.`);
-}
 
 /** Un operario sólo trabaja en proyectos que tiene asignados. */
 function assertCanWork(project: Pick<Project, "assignedOperatorIds">, ctx: Ctx) {
@@ -261,7 +257,7 @@ export function addPurchase(
   input: PurchaseInput,
   ctx: Ctx,
 ): { project: Project; stock: StockState } {
-  assertBuyer(ctx, "Registrar compras");
+  assertManager(ctx, "Registrar compras");
   assertOpen(project);
   if (project.status === "quotation") {
     throw new RuleError("Un proyecto en Cotización todavía no compra materiales: aprobalo primero.");
@@ -749,7 +745,7 @@ export function assignStockToProject(
   input: StockMoveBase & { projectId: string; materialName: string; unit: string },
   ctx: Ctx,
 ): ProjectsAndStock {
-  assertBuyer(ctx, "Asignar material");
+  assertManager(ctx, "Asignar material");
   const p = withProject(projects, input.projectId);
   assertReceivesMaterial(p);
   const next = applyChange(stock, assignToProject(stock, { ...input }, ctx));
@@ -763,7 +759,7 @@ export function releaseProjectStock(
   input: StockMoveBase & { projectId: string; materialName: string; unit: string },
   ctx: Ctx,
 ): ProjectsAndStock {
-  assertBuyer(ctx, "Liberar material");
+  assertManager(ctx, "Liberar material");
   const p = withProject(projects, input.projectId);
   assertOpen(p);
   const next = applyChange(stock, releaseToWarehouse(stock, { ...input }, ctx));
@@ -777,7 +773,7 @@ export function transferProjectStock(
   input: StockMoveBase & { fromProjectId: string; toProjectId: string; materialName: string; unit: string },
   ctx: Ctx,
 ): ProjectsAndStock {
-  assertBuyer(ctx, "Transferir material");
+  assertManager(ctx, "Transferir material");
   const from = withProject(projects, input.fromProjectId);
   const to = withProject(projects, input.toProjectId);
   assertOpen(from);
@@ -800,7 +796,7 @@ export function returnProjectStockToSupplier(
   input: StockMoveBase & { projectId: string; materialName: string; unit: string },
   ctx: Ctx,
 ): ProjectsAndStock {
-  assertBuyer(ctx, "Devolver material al proveedor");
+  assertManager(ctx, "Devolver material al proveedor");
   const p = withProject(projects, input.projectId);
   assertOpen(p);
   const next = applyChange(stock, returnToSupplier(stock, { ...input, from: { projectId: p.id } }, ctx));
@@ -821,7 +817,7 @@ export function leftoverFromProject(
   },
   ctx: Ctx,
 ): ProjectsAndStock {
-  assertBuyer(ctx, "Marcar sobrantes");
+  assertManager(ctx, "Marcar sobrantes");
   const p = withProject(projects, input.projectId);
   assertOpen(p);
   const dest = input.destination && input.destination !== "warehouse" ? withProject(projects, input.destination.projectId) : null;

@@ -60,7 +60,7 @@ describe("menú y acceso por rol", () => {
     useAppStore.setState({ currentMode: "compras" });
     nav.pathname = "/projects";
     render(<AppShell>contenido secreto</AppShell>);
-    expect(menuItems()).toEqual(["Dashboard", "Proyectos", "Alertas", "Cotizador", "Historial", "Stock"]);
+    expect(menuItems()).toEqual(["Dashboard", "Necesidades", "Órdenes de compra", "Alertas", "Cotizador", "Stock"]);
     expect(screen.getAllByText("Martín Ruiz")[0]).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("No tenés acceso a esta sección");
     expect(screen.queryByText("contenido secreto")).toBeNull();

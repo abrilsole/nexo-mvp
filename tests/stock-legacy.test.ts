@@ -32,9 +32,10 @@ describe("migración del modelo anterior al ledger", () => {
     for (const p of seed.projects.filter((x) => x.isClosed)) expect(projectHoldings(seed.stock, p.id)).toHaveLength(0);
   });
 
-  it("es determinística: derivar dos veces da los mismos ids", () => {
-    const again = deriveLedgerFromLegacy(seed.projects, seed.legacyPool);
-    expect(again).toEqual(seed.stock);
+  it("es determinística: derivar dos veces (y armar la demo dos veces) da los mismos ids", () => {
+    expect(deriveLedgerFromLegacy(seed.projects, seed.legacyPool)).toEqual(deriveLedgerFromLegacy(seed.projects, seed.legacyPool));
+    // La demo suma, sobre el ledger derivado, las recepciones de las órdenes de compra con ids estables.
+    expect(buildSeed(NOW).stock).toEqual(seed.stock);
   });
 
   it("nada tiene costo cero en el stock", () => {

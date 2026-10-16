@@ -32,7 +32,7 @@ export function dbRoleOf(role: RoleKey): Exclude<AppRole, "owner"> {
 }
 
 /** Ícono del ítem de menú (el componente lo traduce a un ícono real; acá no hay React). */
-export type NavIcon = "dashboard" | "projects" | "alerts" | "quotes" | "history" | "stock" | "operators" | "settings" | "hours" | "assign" | "day";
+export type NavIcon = "dashboard" | "projects" | "alerts" | "quotes" | "orders" | "stock" | "operators" | "settings" | "hours" | "assign" | "day";
 
 export interface NavItem {
   href: string;
@@ -54,10 +54,10 @@ const NAV: Record<RoleKey, NavItem[]> = {
   ],
   compras: [
     { href: "/compras", label: "Dashboard", icon: "dashboard" },
-    { href: "/compras/proyectos", label: "Proyectos", icon: "projects" },
+    { href: "/compras/proyectos", label: "Necesidades", icon: "projects" },
+    { href: "/compras/ordenes", label: "Órdenes de compra", icon: "orders" },
     { href: "/compras/alertas", label: "Alertas", icon: "alerts" },
     { href: "/compras/cotizador", label: "Cotizador", icon: "quotes" },
-    { href: "/compras/historial", label: "Historial", icon: "history" },
     { href: "/compras/stock", label: "Stock", icon: "stock" },
   ],
   jefe_planta: [

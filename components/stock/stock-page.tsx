@@ -63,14 +63,15 @@ function lotLabel(l: StockLot) {
   return `${l.kind === "leftover" ? "Sobrante" : l.kind === "opening" ? "Inventario inicial" : "Compra"}${d ? ` · ${d}` : ""}`;
 }
 
-/** El mismo módulo para Administrativo (/stock) y Compras (/compras/stock): los dos compran y mueven stock. */
+/** El mismo módulo para Administrativo (/stock, lo edita) y Compras (/compras/stock, solo consulta). */
 export function StockPage({ material, lot, tab, basePath = "/stock" }: { material?: string; lot?: string; tab?: string; basePath?: string }) {
   const stock = useAppStore((s) => s.stock);
   const projects = useAppStore((s) => s.projects);
   const requests = useAppStore((s) => s.requests);
   const setRequestStatus = useAppStore((s) => s.setRequestStatus);
   const updateLotLocation = useAppStore((s) => s.updateLotLocation);
-  const { isBuyer: canManage, roleKey } = useIdentity();
+  // Compras ve el stock en modo solo consulta (también en la base): solo el Administrativo lo edita.
+  const { isManager: canManage, roleKey } = useIdentity();
   const projectLink = (id: string, tabName?: string) => projectHref(roleKey, id, tabName);
   const [query, setQuery] = useState("");
   const [add, setAdd] = useState(false);

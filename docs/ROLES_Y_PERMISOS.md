@@ -23,7 +23,8 @@ Blerp pasó de dos experiencias (Gestión y Taller) a **cuatro roles**. El Lote 
 | Costo por hora de cada operario | Sí | **No** | **No** | **No** |
 | Costo de materiales presupuestado (lista de materiales) | Sí | Sí | **No** | **No** |
 | Precios de compra, compras, stock con costo | Sí | Sí | **No** | **No** |
-| Registrar compras, estado de las líneas, mover stock | Sí | Sí (`compras_save`) | **No** | **No** |
+| Órdenes de compra (crear, enviar, facturar, recibir) | Sí | Sí (`compras_order_save` / `compras_order_status`) | **No** | **No** |
+| Mover stock (ingresar, asignar, devolver) | Sí | **No** (solo consulta) | **No** | **No** |
 | Proyectos (código, nombre, cliente, etapa, fechas) | Sí | Sí | Sí | Solo los suyos, en ejecución |
 | Operarios y asignaciones | Sí | **No** | Sí (sin costo) | Solo su nombre |
 | Horas cargadas | Sí (con valor) | **No** | Sí (sin valor) | Solo las suyas (sin valor) |
@@ -34,7 +35,7 @@ Blerp pasó de dos experiencias (Gestión y Taller) a **cuatro roles**. El Lote 
 **Menú de cada rol** (el mismo mapa arma el menú y los guards de ruta; desde el Lote 5B no hay ítems "Próximamente": lo que no está hecho no se muestra):
 
 - **Administrativo:** Dashboard, Proyectos, Alertas, Horas, Cotizador, Stock, Operarios, Configuración (con la pestaña Usuarios). Historial se sacó en el Lote 6.
-- **Compras:** Dashboard, Proyectos, Alertas, Cotizador, Historial y Stock (ver `docs/COMPRAS.md`).
+- **Compras:** Dashboard, Necesidades, Órdenes de compra, Alertas, Cotizador y Stock (solo consulta). Ver `docs/COMPRAS.md`.
 - **Jefe de planta:** Resumen, Proyectos, Operarios, Asignaciones, Alertas (ver `docs/PLANTA_Y_HORAS.md`).
 - **Operario:** Mi día (solo lo asignado para hoy: proyecto, producto, rubro, horas estimadas y un campo de horas). Ver `docs/PRODUCCION.md`.
 
@@ -53,7 +54,7 @@ Blerp pasó de dos experiencias (Gestión y Taller) a **cuatro roles**. El Lote 
     - trae los operarios **sin** `hourly_cost`;
     - trae las horas **sin** `amount` ni `hourlyCost`;
     - trae muebles, bitácora y pedidos.
-- **Compras escribe** solo con `compras_save()` (Lote 5C): compras reales, lotes y movimientos de stock, estados de línea y pedidos del taller. La base calcula el total de cada compra y nunca toca venta, mano de obra ni rentabilidad.
+- **Compras escribe** solo con las órdenes de compra (`compras_order_save`, `compras_order_status`, Lote 6): la factura crea el costo real y la recepción el stock. `compras_save()` ya solo resuelve pedidos del taller: **el stock es solo consulta para Compras** (en la base). Nunca toca venta, mano de obra ni rentabilidad.
 - **El Operario** sigue con `taller_workspace()` y las funciones `taller_*` (Lote 2).
 - **Llamando a la API directamente** pasa lo mismo: un `select` a una tabla con importes devuelve 0 filas, y las funciones de otro rol dan error.
 - **Baja de una cuenta:** `organization_members.deactivated_at`.
@@ -126,6 +127,7 @@ El pedido fue "Cotizador de materiales: variante para Compras que solo trabaja c
 ## Archivos
 
 - `supabase/migrations/20261018120000_lote5c_compras.sql`: estados de línea, `compras_save` y `compras_workspace` con estados (Lote 5C).
+- `supabase/migrations/20261020120000_lote6_ordenes_de_compra.sql`: órdenes de compra, stock solo consulta para Compras y estado de materiales (Lote 6).
 - `supabase/migrations/20261016120000_lote5a_roles_usuarios_vigencia.sql`: roles, funciones de lectura, usuarios, precios con vigencia y valores congelados. Sin DROP ni DELETE.
 - `supabase/manual/20261016120100_lote5a_manual.sql`: **se corre a mano** porque tiene DROP y DELETE. Hace dos cosas:
   - amplía la regla de la columna `role` para aceptar `compras` y `jefe_planta`;

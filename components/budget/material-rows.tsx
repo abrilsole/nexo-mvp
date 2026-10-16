@@ -41,7 +41,8 @@ export function MaterialRows({ materials, onChange, owner }: { materials: Materi
         <h4 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
           Materiales
           <HelpTip label="Materiales">
-            Cantidad × costo unitario, más el desperdicio esperado. Para algo que se compra hecho o se corta, alcanza con cantidad 1 y el costo total.
+            Cantidad × costo unitario ESTIMADO (de memoria: el costo real lo trae la factura de la orden de compra), más el desperdicio esperado. Para algo
+            que se compra hecho o se corta, alcanza con cantidad 1 y el costo total.
           </HelpTip>
         </h4>
         <Button variant="outline" size="sm" onClick={() => onChange([...materials, newMaterialRow()])}>
@@ -66,7 +67,7 @@ export function MaterialRows({ materials, onChange, owner }: { materials: Materi
             </div>
             <NumField id={`m-qty-${m.key}`} label="Cantidad" value={m.quantity} onChange={(v) => setMaterial(m.key, { quantity: v })} />
             <TextField id={`m-unit-${m.key}`} label="Unidad" value={m.unit} onChange={(v) => setMaterial(m.key, { unit: v })} />
-            <NumField id={`m-cost-${m.key}`} label="Costo unitario" suffix="$" value={m.unitCost} onChange={(v) => setMaterial(m.key, { unitCost: v })} />
+            <NumField id={`m-cost-${m.key}`} label="Costo unitario estimado" suffix="$" value={m.unitCost} onChange={(v) => setMaterial(m.key, { unitCost: v })} />
             <NumField id={`m-waste-${m.key}`} label="Desperdicio" suffix="%" value={m.wastePct} onChange={(v) => setMaterial(m.key, { wastePct: v })} />
             <RemoveButton label={`Quitar material ${i + 1} de ${owner}`} onClick={() => onChange(materials.filter((x) => x.key !== m.key))} />
             {num(m.quantity) > 0 && num(m.unitCost) > 0 && (

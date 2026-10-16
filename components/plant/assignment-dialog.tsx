@@ -9,6 +9,8 @@ import { isAssignable, workdaysBetween } from "@/lib/plant";
 import { rubroLabel } from "@/lib/rubros";
 import { parseDecimal } from "@/lib/schemas";
 import { useAppStore } from "@/store/use-app-store";
+import { useMaterialsStateOf } from "@/store/selectors";
+import { MATERIALS_STATE_LABELS } from "@/lib/purchasing";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input, Select } from "@/components/ui/input";
@@ -32,6 +34,7 @@ function AssignmentForm({ draft, onClose }: { draft: AssignmentDraft; onClose: (
   const saveAssignment = useAppStore((s) => s.saveAssignment);
   const removeAssignment = useAppStore((s) => s.removeAssignment);
   const editing = !!draft.id;
+  const materialsOf = useMaterialsStateOf();
   const [projectId, setProjectId] = useState(draft.projectId ?? projects[0]?.id ?? "");
   const project = projects.find((p) => p.id === projectId);
   const [itemId, setItemId] = useState(draft.itemId ?? "");
@@ -92,6 +95,11 @@ function AssignmentForm({ draft, onClose }: { draft: AssignmentDraft; onClose: (
             </Select>
           </Field>
         </div>
+        {project && materialsOf(project) && materialsOf(project) !== "complete" && (
+          <p role="status" className="rounded-md bg-amber-50 p-2 text-xs text-amber-900">
+            Materiales del proyecto: {MATERIALS_STATE_LABELS[materialsOf(project) ?? "none"].toLowerCase()}. Podés asignar igual; avisale a Compras si hace falta.
+          </p>
+        )}
         {need && (
           <p className="text-xs text-slate-500">
             Estimado: {need.hours} h en total · pide {need.workers} {need.workers === 1 ? "operario" : "operarios"}.

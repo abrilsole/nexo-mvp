@@ -53,7 +53,7 @@ beforeAll(async () => {
     stock: s.stock,
     requests: [],
     assignments: [],
-    lineStatuses: [],
+    orders: [],
     settings: { ...DEFAULT_SETTINGS },
     resolvedAlertIds: [],
   });

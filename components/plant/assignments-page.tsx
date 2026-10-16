@@ -3,13 +3,15 @@
 // Configuración, misma regla del Cotizador) y rubros pendientes de asignar. Sin importes.
 import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Pencil, Plus } from "lucide-react";
-import type { WorkAssignment } from "@/types";
+import type { Project, WorkAssignment } from "@/types";
+import type { MaterialsState } from "@/lib/purchasing";
 import { formatDate, formatNumber } from "@/lib/formatting";
 import { activeOperators } from "@/lib/operators";
 import { addDays, dayLoad, pendingAssignments, workWeek } from "@/lib/plant";
 import { rubroLabel } from "@/lib/rubros";
 import { useAppStore } from "@/store/use-app-store";
-import { useToday } from "@/store/selectors";
+import { useMaterialsStateOf, useToday } from "@/store/selectors";
+import { MaterialsBadge } from "@/components/purchasing/purchasing-projects";
 import { PageHeader } from "@/components/shared/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +33,8 @@ export function AssignmentsPage() {
   const week = workWeek(anchor);
   const pending = useMemo(() => pendingAssignments(projects, assignments, today), [projects, assignments, today]);
   const code = (id: string) => projects.find((p) => p.id === id)?.code ?? id;
+  const materialsOf = useMaterialsStateOf();
+  const projectOf = (id: string) => projects.find((p) => p.id === id);
 
   return (
     <div className="space-y-6">
@@ -168,7 +172,8 @@ export function AssignmentsPage() {
               {pending.map((r) => (
                 <li key={`${r.projectId}-${r.itemId}-${r.rubro}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
                   <span className="min-w-0 break-words">
-                    <strong>{r.projectCode}</strong> {r.projectName} · <strong>{r.itemName}</strong> · {rubroLabel(r.rubro)}
+                    <strong>{r.projectCode}</strong> {r.projectName} · <strong>{r.itemName}</strong> · {rubroLabel(r.rubro)}{" "}
+                    <PendingMaterials project={projectOf(r.projectId)} state={materialsOf} />
                     <span className="block text-xs text-slate-500">
                       Pide {r.workers} {r.workers === 1 ? "operario" : "operarios"} · asignados {r.assigned} · {formatNumber(r.hours)} h estimadas · entrega {formatDate(r.dueDate)}
                       {r.daysLeft < 0 ? " (vencida)" : ` (faltan ${r.daysLeft} días)`}
@@ -203,4 +208,8 @@ function AssignmentChip({ assignment: a, code, onEdit }: { assignment: WorkAssig
       <span className="shrink-0 tabular">{formatNumber(a.plannedHours)} h</span>
     </button>
   );
+}
+
+function PendingMaterials({ project, state }: { project: Project | undefined; state: (p: Project) => MaterialsState | null }) {
+  return project ? <MaterialsBadge state={state(project)} /> : null;
 }
