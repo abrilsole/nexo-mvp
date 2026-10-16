@@ -8,11 +8,11 @@ import { MARGIN_TOOLTIP } from "@/lib/constants";
 import { marginSummary, projectSignals, weekHours, type ProjectSignal } from "@/lib/dashboard";
 import { formatCurrency, formatDate, formatMarginPoints, formatNumber, formatPercent } from "@/lib/formatting";
 import { pendingAssignments } from "@/lib/plant";
-import { pendingLines, purchaseLines } from "@/lib/purchasing";
+import { needsToBuy } from "@/lib/purchasing";
 import { rubroLabel } from "@/lib/rubros";
 import { SCHEDULE_LABELS, type ScheduleSignal } from "@/lib/production";
 import { useAppStore } from "@/store/use-app-store";
-import { useAlerts, useToday } from "@/store/selectors";
+import { useAlerts, useMaterialNeeds, useToday } from "@/store/selectors";
 import { PageHeader } from "@/components/shared/page-header";
 import { ScheduleBadge } from "@/components/shared/badges";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -77,7 +77,6 @@ export function Dashboard() {
   const projects = useAppStore((s) => s.projects);
   const assignments = useAppStore((s) => s.assignments);
   const operators = useAppStore((s) => s.operators);
-  const statuses = useAppStore((s) => s.lineStatuses);
   const settings = useAppStore((s) => s.settings);
   const alerts = useAlerts();
   const [open, setOpen] = useState<string | null>(null);
@@ -86,7 +85,7 @@ export function Dashboard() {
   const signals = useMemo(() => projectSignals(projects, today, settings.dueSoonDays), [projects, today, settings.dueSoonDays]);
   const week = useMemo(() => weekHours(projects, assignments, operators, today), [projects, assignments, operators, today]);
   const margin = useMemo(() => marginSummary(projects), [projects]);
-  const toBuy = useMemo(() => pendingLines(purchaseLines(projects, statuses, today)), [projects, statuses, today]);
+  const toBuy = needsToBuy(useMaterialNeeds());
   const unassigned = useMemo(() => pendingAssignments(projects, assignments, today), [projects, assignments, today]);
   const over = week.operators.filter((o) => o.verdict === "over");
   const short = week.operators.filter((o) => o.verdict === "short");
@@ -231,7 +230,7 @@ export function Dashboard() {
           )}
         </Block>
 
-        <Block title="Pendientes" help="Lo que hay que resolver: alertas abiertas, materiales sin comprar (pendientes o cotizando) y producto + rubro con menos operarios asignados de los pedidos.">
+        <Block title="Pendientes" help="Lo que hay que resolver: alertas abiertas, materiales que faltan pedir y producto + rubro con menos operarios asignados de los pedidos.">
           <div className="grid grid-cols-3 gap-2">
             <Metric id="q-a" label="Alertas abiertas" value={String(alerts.count)} tone={alerts.count ? "red" : "default"} open={open === "q-a"} onToggle={() => toggle("q-a")} />
             <Metric id="q-c" label="Compras sin hacer" value={String(toBuy.length)} tone={toBuy.length ? "yellow" : "default"} open={open === "q-c"} onToggle={() => toggle("q-c")} />
@@ -251,11 +250,11 @@ export function Dashboard() {
             <ul className="divide-y divide-slate-200">
               {toBuy.slice(0, 8).map((l) => (
                 <li key={`${l.projectId}-${l.lineId}`} className="py-1.5">
-                  <span className="text-xs text-slate-500">{l.projectCode}</span> {l.description} · falta {formatNumber(l.remaining)} {l.unit}
+                  <span className="text-xs text-slate-500">{l.projectCode}</span> {l.description} · falta pedir {formatNumber(l.toBuy)} {l.unit}
                 </li>
               ))}
             </ul>
-            <Link href="/compras/proyectos" className="mt-2 inline-flex items-center gap-1 text-blue-700 hover:underline">Ver materiales por proyecto <ArrowRight className="size-3.5" /></Link>
+            <Link href="/compras/proyectos" className="mt-2 inline-flex items-center gap-1 text-blue-700 hover:underline">Ver necesidades de compra <ArrowRight className="size-3.5" /></Link>
           </Detail>
           <Detail id="q-u" open={open === "q-u"}>
             <ul className="divide-y divide-slate-200">

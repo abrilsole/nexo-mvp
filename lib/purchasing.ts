@@ -1,10 +1,11 @@
 // ─────────────────────────────────────────────────────────────
-// Compras (Lote 5C) — funciones puras.
-// Trabajan SOLO con materiales: costo presupuestado de compra, precio realmente pagado, proveedor y fechas.
-// Nunca precio de venta, rentabilidad ni mano de obra (Compras no los ve: docs/ROLES_Y_PERMISOS.md).
+// Compras (Lotes 5C y 6) — funciones puras.
+// Trabajan SOLO con materiales: costo unitario ESTIMADO (lo carga el Administrativo, de memoria), costo REAL
+// (el de la factura de la orden de compra), proveedor y fechas. Nunca precio de venta, rentabilidad ni mano de obra.
+// Distinguen siempre compra (factura), consumo, desperdicio y sobrante reutilizable (ver lib/material-reconciliation.ts).
 // ─────────────────────────────────────────────────────────────
-import type { Alert, AlertLevel, AlertSettings, LineStatus, Project, PurchaseLineStatus } from "@/types";
-import type { StockState } from "./stock";
+import type { ActivityEvent, Alert, AlertLevel, AlertSettings, OrderReceived, Project, PurchaseEntry, PurchaseOrder, PurchaseOrderLine } from "@/types";
+import { receiveStock, warehouseHoldings, type StockChange, type StockCtx, type StockState } from "./stock";
 import { alertBase, alertResolutionKey, sortAlerts } from "./alerts";
 import { materialBudgetQuantity, type QuoteMaterial } from "./budget-calculator";
 import { daysBetween, formatCurrency, formatDate, formatNumber, formatQty } from "./formatting";
@@ -14,160 +15,356 @@ import { addDays } from "./plant";
 const EPS = 1e-6;
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-export const LINE_STATUSES: LineStatus[] = ["pending", "quoting", "purchased", "received"];
+// ── Necesidades de compra ─────────────────────────────────────
 
-export const LINE_STATUS_LABELS: Record<LineStatus, string> = {
-  pending: "Pendiente",
-  quoting: "Cotizando",
-  purchased: "Comprado",
+/** Estado de una necesidad: se deriva de las órdenes de compra y de las compras directas. */
+export type NeedStatus = "to_buy" | "ordered" | "received";
+
+export const NEED_STATUS_LABELS: Record<NeedStatus, string> = {
+  to_buy: "Por comprar",
+  ordered: "En orden de compra",
   received: "Recibido",
 };
 
-/** Lo que todavía hay que comprar (o cotizar). */
-export const isOpenStatus = (s: LineStatus) => s === "pending" || s === "quoting";
-
-export interface PurchaseLine {
+export interface MaterialNeed {
   projectId: string;
   projectCode: string;
   projectName: string;
+  /** Línea de materiales del costo presupuestado. */
   lineId: string;
-  /** Clave del material (une presupuesto, compras y stock). */
   key: string;
   materialId?: string;
   description: string;
   unit: string;
-  /** null = monto directo (algo que se compra hecho: se cuenta como 1 unidad). */
-  quantity: number | null;
-  /** Cantidad a comprar (1 en un monto directo). */
   needed: number;
-  purchased: number;
-  remaining: number;
-  /** Costo de compra presupuestado por unidad (en un monto directo, el monto). */
-  budgetUnitCost: number;
-  budgetTotal: number;
-  /** Lo realmente pagado por este material en el proyecto. */
-  paidTotal: number;
-  /** Pagado de más contra el presupuesto por la cantidad comprada (0 si no se pasó). */
-  overBy: number;
-  status: LineStatus;
+  /** Costo unitario ESTIMADO por el Administrativo al crear el proyecto (de memoria, no real). */
+  estimatedUnitCost: number;
+  estimatedTotal: number;
+  /** En órdenes de compra (cualquier estado). */
+  ordered: number;
+  /** Recibido de esas órdenes. */
+  receivedFromOrders: number;
+  /** Compras directas anteriores (sin orden): ya están en el proyecto. */
+  direct: number;
+  /** Asignado desde el depósito al proyecto (Stock → Asignar; neto de lo devuelto): ya está en el proyecto. */
+  fromDepot: number;
+  /** Stock libre del depósito que alcanzaría para cubrir lo que falta (sugerencia: no se mueve solo). */
+  fromStock: number;
+  /** Lo que falta pedir: necesario − en órdenes − compras directas − asignado del depósito − stock libre. */
+  toBuy: number;
+  status: NeedStatus;
+  orders: Array<{ orderId: string; number: string; quantity: number; received: number }>;
   /** Para cuándo se necesita: el inicio del proyecto (supuesto, ver docs/COMPRAS.md). */
   needBy: string;
-  /** Días hasta needBy (negativo = ya se necesitaba). */
   daysLeft: number;
-  /** Un proyecto en Cotización todavía no compra. */
-  canBuy: boolean;
+}
+
+/** Ids de las compras reales que salieron de una factura de orden ("pur-" + línea). */
+export const orderEntryId = (line: Pick<PurchaseOrderLine, "id">) => `pur-${line.id}`;
+
+/**
+ * Lista de necesidades: los materiales (con cantidad) de los proyectos aprobados y abiertos, con lo que ya está en
+ * órdenes, lo recibido, las compras directas anteriores y el stock libre del depósito (asignado por orden de inicio).
+ */
+export function materialNeeds(projects: Project[], orders: PurchaseOrder[], stock: StockState, today: string): MaterialNeed[] {
+  const lines = orders.flatMap((o) => o.lines.map((l) => ({ o, l })));
+  const fromOrders = new Set(lines.map(({ l }) => orderEntryId(l)));
+  const free = new Map<string, number>();
+  for (const h of warehouseHoldings(stock)) free.set(h.lot.materialId, (free.get(h.lot.materialId) ?? 0) + h.quantity);
+  // Asignado del depósito a cada proyecto (asignar − devolver), por material.
+  const lotKey = new Map(stock.lots.map((l) => [l.id, materialKey(l.materialId, l.materialName)]));
+  const depot = new Map<string, number>();
+  for (const m of stock.movements) {
+    const sign = m.kind === "assign" ? 1 : m.kind === "release" ? -1 : 0;
+    const place = m.kind === "assign" ? m.to : m.from;
+    if (sign === 0 || place.type !== "project") continue;
+    const k = `${place.projectId}|${lotKey.get(m.lotId) ?? ""}`;
+    depot.set(k, (depot.get(k) ?? 0) + sign * m.quantity);
+  }
+  const raw = projects
+    .filter((p) => !p.isClosed && p.status !== "quotation")
+    .flatMap((p) => {
+      const direct = new Map<string, number>();
+      for (const e of p.purchaseEntries) {
+        if (fromOrders.has(e.id)) continue;
+        const k = materialKey(e.materialId, e.materialName);
+        direct.set(k, (direct.get(k) ?? 0) + e.quantity);
+      }
+      return p.budgetLines
+        .filter((l) => l.category === "materials" && l.quantity !== null)
+        .map((l) => {
+          const mine = lines.filter(({ l: ol }) => ol.projectId === p.id && ol.budgetLineId === l.id);
+          const key = materialKey(l.materialId, l.description);
+          return {
+            p,
+            l,
+            key,
+            ordered: round2(mine.reduce((s, x) => s + x.l.quantity, 0)),
+            receivedFromOrders: round2(mine.reduce((s, x) => s + x.l.receivedQuantity, 0)),
+            direct: round2(direct.get(key) ?? 0),
+            fromDepot: round2(Math.max(0, depot.get(`${p.id}|${key}`) ?? 0)),
+            orders: mine.map(({ o, l: ol }) => ({ orderId: o.id, number: o.number, quantity: ol.quantity, received: ol.receivedQuantity })),
+          };
+        });
+    })
+    .sort((a, b) => a.p.startDate.localeCompare(b.p.startDate) || a.p.code.localeCompare(b.p.code));
+  return raw.map(({ p, l, key, ordered, receivedFromOrders, direct, fromDepot, orders: os }): MaterialNeed => {
+    const needed = l.quantity ?? 0;
+    const missing = Math.max(0, needed - ordered - direct - fromDepot);
+    const fromStock = round2(Math.min(missing, free.get(key) ?? 0));
+    free.set(key, (free.get(key) ?? 0) - fromStock);
+    const received = receivedFromOrders + direct + fromDepot;
+    const status: NeedStatus = received + EPS >= needed ? "received" : ordered > 0 ? "ordered" : "to_buy";
+    return {
+      projectId: p.id,
+      projectCode: p.code,
+      projectName: p.name,
+      lineId: l.id,
+      key,
+      materialId: l.materialId,
+      description: l.description,
+      unit: l.unit,
+      needed,
+      estimatedUnitCost: l.unitCost,
+      estimatedTotal: l.total,
+      ordered,
+      receivedFromOrders,
+      direct,
+      fromDepot,
+      fromStock,
+      toBuy: round2(missing - fromStock),
+      status,
+      orders: os,
+      needBy: p.startDate,
+      daysLeft: daysBetween(today, p.startDate),
+    };
+  });
+}
+
+/** Lo que hay que pedir: necesidades con algo por comprar, primero lo que se necesita antes. */
+export const needsToBuy = (needs: MaterialNeed[]) => needs.filter((n) => n.toBuy > EPS);
+
+/** Qué hay que comprar en los próximos `days` días (o ya se necesitaba). */
+export function toBuyWithin(needs: MaterialNeed[], today: string, days: number): MaterialNeed[] {
+  const limit = addDays(today, days);
+  return needsToBuy(needs).filter((n) => n.needBy <= limit);
+}
+
+// ── Estado de materiales del proyecto ─────────────────────────
+
+export type MaterialsState = "none" | "on_the_way" | "complete";
+
+export const MATERIALS_STATE_LABELS: Record<MaterialsState, string> = { none: "Sin comprar", on_the_way: "En camino", complete: "Completo" };
+
+/**
+ * Sin comprar = nada pedido ni recibido · Completo = todo recibido · En camino = el resto.
+ * null si el proyecto no tiene materiales con cantidad (los montos directos son servicios, no se reciben).
+ */
+export function materialsState(needs: MaterialNeed[], projectId: string): MaterialsState | null {
+  const mine = needs.filter((n) => n.projectId === projectId);
+  if (mine.length === 0) return null;
+  if (mine.every((n) => n.status === "received")) return "complete";
+  if (mine.every((n) => n.ordered === 0 && n.direct === 0 && n.fromDepot === 0)) return "none";
+  return "on_the_way";
+}
+
+// ── Costo de materiales: estimado vs real ─────────────────────
+
+export interface CostSource {
+  entryId: string;
+  /** "OC-0001 · factura A-123" o "Compra directa". */
+  label: string;
+  supplier?: string;
+  date: string;
+  quantity: number;
+  unitCost: number;
+  total: number;
+}
+
+export interface MaterialCostRow {
+  lineId: string;
+  description: string;
+  unit: string;
+  estimatedQuantity: number | null;
+  estimatedUnitCost: number;
+  estimated: number;
+  /** Compras reales (facturas de órdenes y compras directas) de ese material en el proyecto. */
+  real: number;
+  diff: number;
+  sources: CostSource[];
 }
 
 /**
- * Estado de una línea: "Recibido" lo marca Compras; si ya se compró todo es "Comprado"; si no, el que se
- * haya marcado (cotizando o comprado en parte) o "Pendiente".
+ * Materiales del proyecto: estimado (presupuesto) contra real (lo FACTURADO; "Pagada" no cambia el costo).
+ * Cada importe real se abre hasta la factura y la orden de compra que lo generan.
  */
-export function lineStatusOf(stored: LineStatus | undefined, needed: number, purchased: number): LineStatus {
-  if (stored === "received") return "received";
-  if (purchased + EPS >= needed) return "purchased";
-  return stored ?? "pending";
-}
-
-/** Líneas de materiales de los proyectos abiertos con lo comprado, lo pagado y su estado. */
-export function purchaseLines(projects: Project[], statuses: PurchaseLineStatus[], today: string): PurchaseLine[] {
-  const stored = new Map(statuses.map((s) => [`${s.projectId}|${s.lineId}`, s.status]));
-  return projects
-    .filter((p) => !p.isClosed)
-    .flatMap((p) => {
-      const bought = new Map<string, { qty: number; paid: number }>();
-      for (const e of p.purchaseEntries) {
-        const k = materialKey(e.materialId, e.materialName);
-        const b = bought.get(k) ?? { qty: 0, paid: 0 };
-        bought.set(k, { qty: b.qty + e.quantity, paid: b.paid + e.total });
-      }
-      return p.budgetLines
-        .filter((l) => l.category === "materials")
-        .map((l): PurchaseLine => {
-          const key = materialKey(l.materialId, l.description);
-          const needed = l.quantity ?? 1;
-          const budgetUnitCost = l.quantity === null ? l.total : l.unitCost;
-          const b = bought.get(key) ?? { qty: 0, paid: 0 };
-          const purchased = round2(b.qty);
-          return {
-            projectId: p.id,
-            projectCode: p.code,
-            projectName: p.name,
-            lineId: l.id,
-            key,
-            materialId: l.materialId,
-            description: l.description,
-            unit: l.unit,
-            quantity: l.quantity,
-            needed,
-            purchased,
-            remaining: round2(Math.max(0, needed - purchased)),
-            budgetUnitCost,
-            budgetTotal: l.total,
-            paidTotal: round2(b.paid),
-            overBy: round2(Math.max(0, b.paid - budgetUnitCost * purchased)),
-            status: lineStatusOf(stored.get(`${p.id}|${l.id}`), needed, purchased),
-            needBy: p.startDate,
-            daysLeft: daysBetween(today, p.startDate),
-            canBuy: p.status !== "quotation",
-          };
-        });
+export function materialCosts(
+  project: Project,
+  orders: PurchaseOrder[],
+): { rows: MaterialCostRow[]; estimated: number; real: number; diff: number; pendingEstimated: number } {
+  const byEntry = new Map(orders.flatMap((o) => o.lines.map((l) => [orderEntryId(l), o] as const)));
+  const sourceOf = (e: PurchaseEntry): CostSource => {
+    const o = byEntry.get(e.id);
+    return {
+      entryId: e.id,
+      label: o ? `${o.number} · factura ${o.invoiceNumber ?? "—"}` : "Compra directa",
+      supplier: e.supplier,
+      date: e.date,
+      quantity: e.quantity,
+      unitCost: e.unitCost,
+      total: e.total,
+    };
+  };
+  const rows = project.budgetLines
+    .filter((l) => l.category === "materials")
+    .map((l): MaterialCostRow => {
+      const key = materialKey(l.materialId, l.description);
+      const sources = project.purchaseEntries.filter((e) => materialKey(e.materialId, e.materialName) === key).map(sourceOf);
+      const real = round2(sources.reduce((s, x) => s + x.total, 0));
+      return { lineId: l.id, description: l.description, unit: l.unit, estimatedQuantity: l.quantity, estimatedUnitCost: l.unitCost, estimated: l.total, real, diff: round2(real - l.total), sources };
     });
+  const estimated = round2(rows.reduce((s, r) => s + r.estimated, 0));
+  const real = round2(rows.reduce((s, r) => s + r.real, 0));
+  // La diferencia se mide solo en lo ya facturado: comparar contra el estimado de lo que falta facturar engañaría.
+  const billed = rows.filter((r) => r.real > 0);
+  return {
+    rows,
+    estimated,
+    real,
+    diff: round2(billed.reduce((s, r) => s + r.diff, 0)),
+    pendingEstimated: round2(rows.filter((r) => r.real === 0).reduce((s, r) => s + r.estimated, 0)),
+  };
 }
 
-const LESS_ADVANCED: LineStatus[] = ["pending", "quoting", "purchased", "received"];
+// ── Órdenes de compra ─────────────────────────────────────────
 
-export interface ConsolidatedLine {
-  key: string;
-  description: string;
-  unit: string;
-  needed: number;
-  purchased: number;
-  remaining: number;
-  budgetTotal: number;
-  /** El estado menos avanzado de sus líneas. */
-  status: LineStatus;
-  /** Cuándo lo necesita el primero que todavía no lo tiene. */
-  needBy: string;
-  lines: PurchaseLine[];
+export const ORDER_STATUS_LABELS: Record<PurchaseOrder["status"], string> = { draft: "Borrador", sent: "Enviada", invoiced: "Facturada" };
+export const ORDER_RECEIVED_LABELS: Record<OrderReceived, string> = { no: "No", partial: "Parcial", yes: "Sí" };
+
+export const orderTotal = (o: Pick<PurchaseOrder, "lines">) => round2(o.lines.reduce((s, l) => s + l.quantity * l.unitCost, 0));
+
+export interface OrderDraft {
+  supplier: string;
+  date: string;
+  notes?: string;
+  lines: Array<Pick<PurchaseOrderLine, "projectId" | "budgetLineId" | "materialId" | "materialName" | "unit" | "quantity" | "unitCost">>;
 }
 
-/** El mismo material de varios proyectos junto, para comprarlo una sola vez. */
-export function consolidate(lines: PurchaseLine[]): ConsolidatedLine[] {
-  const groups = new Map<string, PurchaseLine[]>();
-  for (const l of lines) {
-    const k = `${l.key}|${l.unit}`;
-    groups.set(k, [...(groups.get(k) ?? []), l]);
-  }
-  return [...groups.values()]
-    .map((ls): ConsolidatedLine => {
-      const pending = ls.filter((l) => l.remaining > EPS);
-      return {
-        key: ls[0].key,
-        description: ls[0].description,
-        unit: ls[0].unit,
-        needed: round2(ls.reduce((s, l) => s + l.needed, 0)),
-        purchased: round2(ls.reduce((s, l) => s + l.purchased, 0)),
-        remaining: round2(ls.reduce((s, l) => s + l.remaining, 0)),
-        budgetTotal: round2(ls.reduce((s, l) => s + l.budgetTotal, 0)),
-        status: LESS_ADVANCED.find((st) => ls.some((l) => l.status === st)) ?? "pending",
-        needBy: (pending.length > 0 ? pending : ls).map((l) => l.needBy).sort()[0],
-        lines: [...ls].sort((a, b) => a.needBy.localeCompare(b.needBy)),
-      };
-    })
-    .sort((a, b) => a.needBy.localeCompare(b.needBy) || a.description.localeCompare(b.description));
+export function orderDraftError(d: OrderDraft): string | null {
+  if (!d.supplier.trim()) return "Indicá el proveedor elegido.";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return "Indicá la fecha de la orden.";
+  if (d.lines.length === 0) return "Elegí al menos un material.";
+  if (d.lines.some((l) => !(l.quantity > 0))) return "Las cantidades tienen que ser mayores a cero.";
+  if (d.lines.some((l) => !(l.unitCost > 0))) return "Indicá el costo unitario real conseguido de cada material.";
+  return null;
 }
 
-/** Pendientes de comprar: proyectos que ya compran, líneas pendientes o cotizando con algo por comprar. */
-export function pendingLines(lines: PurchaseLine[]): PurchaseLine[] {
-  return lines
-    .filter((l) => l.canBuy && isOpenStatus(l.status) && l.remaining > EPS)
-    .sort((a, b) => a.needBy.localeCompare(b.needBy) || a.projectCode.localeCompare(b.projectCode));
+/** Próximo número correlativo (la base lo asigna igual: el máximo + 1). */
+export function nextOrderNumber(orders: Pick<PurchaseOrder, "number">[]): string {
+  const max = Math.max(0, ...orders.map((o) => Number(/^OC-(\d+)$/.exec(o.number)?.[1] ?? 0)));
+  return `OC-${String(max + 1).padStart(4, "0")}`;
 }
 
-/** Qué hay que comprar en los próximos `days` días (o ya se necesitaba). */
-export function toBuyWithin(lines: PurchaseLine[], today: string, days: number): PurchaseLine[] {
-  const limit = addDays(today, days);
-  return pendingLines(lines).filter((l) => l.needBy <= limit);
+export interface InvoiceInput {
+  invoiceNumber: string;
+  invoiceAmount: number;
+  invoiceDate: string;
+}
+
+export function invoiceError(order: PurchaseOrder, i: InvoiceInput): string | null {
+  if (order.status !== "sent") return "Solo se factura una orden Enviada.";
+  if (!i.invoiceNumber.trim()) return "Indicá el número de factura.";
+  if (!(i.invoiceAmount > 0)) return "Indicá el monto de la factura.";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(i.invoiceDate)) return "Indicá la fecha de la factura.";
+  return null;
+}
+
+/**
+ * Lo que crea la base al facturar (mismo id, precio y fecha): una compra real por línea. Desde acá cambia el costo
+ * real de materiales del proyecto.
+ */
+export function invoiceEntries(order: PurchaseOrder, i: InvoiceInput, actor: string, now: string): PurchaseEntry[] {
+  return order.lines.map((l) => ({
+    id: orderEntryId(l),
+    projectId: l.projectId,
+    materialId: l.materialId,
+    materialName: l.materialName,
+    quantity: l.quantity,
+    unit: l.unit,
+    unitCost: l.unitCost,
+    total: round2(l.quantity * l.unitCost),
+    supplier: order.supplier,
+    date: i.invoiceDate,
+    notes: `${order.number} · factura ${i.invoiceNumber.trim()}`,
+    createdBy: actor,
+    createdAt: now,
+  }));
+}
+
+/** Bitácora del proyecto por cada línea facturada (la base escribe lo mismo). */
+export function invoiceMessage(order: PurchaseOrder, line: PurchaseOrderLine, invoiceNumber: string): string {
+  return `Factura ${invoiceNumber.trim()} de ${order.supplier} (${order.number}): ${formatNumber(line.quantity)} ${line.unit} de ${line.materialName}.`;
+}
+
+export interface ReceiptInput {
+  lineId: string;
+  quantity: number;
+}
+
+/** Recibido de la orden: no / parcial / sí, según lo recibido de cada línea. */
+export function receivedState(lines: Pick<PurchaseOrderLine, "quantity" | "receivedQuantity">[]): OrderReceived {
+  if (lines.length > 0 && lines.every((l) => l.receivedQuantity + EPS >= l.quantity)) return "yes";
+  return lines.some((l) => l.receivedQuantity > EPS) ? "partial" : "no";
+}
+
+/**
+ * Recibir cantidades: el material entra al proyecto (lote con el costo real de la línea). Devuelve el cambio de stock
+ * y la orden actualizada; los ids del lote y del movimiento viajan a la base para que quede igual.
+ */
+export function receiveOrder(
+  order: PurchaseOrder,
+  receipts: ReceiptInput[],
+  projects: Pick<Project, "id" | "code" | "name" | "purchaseEntries">[],
+  ctx: StockCtx & { today: string },
+): { order: PurchaseOrder; change: StockChange; sent: Array<{ line_id: string; quantity: number; lot_id: string; movement_id: string; material_key: string }> } {
+  if (order.status === "draft") throw new Error("Primero enviá la orden.");
+  const change: StockChange = { lots: [], movements: [] };
+  const sent: Array<{ line_id: string; quantity: number; lot_id: string; movement_id: string; material_key: string }> = [];
+  const lines = order.lines.map((l) => {
+    const r = receipts.find((x) => x.lineId === l.id);
+    if (!r || !(r.quantity > 0)) return l;
+    if (l.receivedQuantity + r.quantity > l.quantity + EPS) {
+      throw new Error(`No se puede recibir más de lo pedido de ${l.materialName} (${formatNumber(l.receivedQuantity + r.quantity)} de ${formatNumber(l.quantity)}).`);
+    }
+    const p = projects.find((x) => x.id === l.projectId);
+    const key = materialKey(l.materialId, l.materialName);
+    const got = receiveStock(
+      {
+        materialId: key,
+        materialName: l.materialName,
+        unit: l.unit,
+        quantity: r.quantity,
+        unitCost: l.unitCost,
+        supplier: order.supplier,
+        date: ctx.today,
+        destination: { projectId: l.projectId, projectName: p ? `${p.code} · ${p.name}` : l.projectId },
+        purchaseEntryId: p?.purchaseEntries.some((e) => e.id === orderEntryId(l)) ? orderEntryId(l) : undefined,
+      },
+      ctx,
+    );
+    change.lots.push(...got.lots);
+    change.movements.push(...got.movements);
+    sent.push({ line_id: l.id, quantity: r.quantity, lot_id: got.lot.id, movement_id: got.movements[0].id, material_key: key });
+    return { ...l, receivedQuantity: round2(l.receivedQuantity + r.quantity) };
+  });
+  return { order: { ...order, lines, received: receivedState(lines) }, change, sent };
+}
+
+/** Evento de bitácora para las líneas facturadas de un proyecto. */
+export function invoiceActivity(order: PurchaseOrder, projectId: string, invoiceNumber: string, actor: string, now: string, id: (n: number) => string): ActivityEvent[] {
+  return order.lines
+    .filter((l) => l.projectId === projectId)
+    .map((l, i) => ({ id: id(i), at: now, actor, kind: "purchase" as const, message: invoiceMessage(order, l, invoiceNumber) }));
 }
 
 export interface OverBudgetPurchase {
@@ -222,19 +419,20 @@ export function overBudgetPurchases(projects: Project[]): OverBudgetPurchase[] {
 
 export interface PurchasingContext {
   projects: Project[];
-  statuses: PurchaseLineStatus[];
+  orders: PurchaseOrder[];
+  stock: StockState;
   settings: Pick<AlertSettings, "purchaseLeadDays" | "categoryWarningPct" | "categoryCriticalPct">;
   today: string;
 }
 
 /**
- * Alertas de Compras: material que se necesita en pocos días (Configuración → Alertas) y todavía no se compró,
- * y compras pagadas más caras que lo presupuestado. Sin precio de venta ni rentabilidad.
+ * Alertas de Compras: material que se necesita en pocos días (Configuración → Alertas) y todavía falta pedir, y
+ * compras facturadas más caras que lo estimado. Sin precio de venta ni rentabilidad.
  */
 export function purchasingAlerts(ctx: PurchasingContext): Alert[] {
   const byId = new Map(ctx.projects.map((p) => [p.id, p]));
   const alerts: Alert[] = [];
-  const due = toBuyWithin(purchaseLines(ctx.projects, ctx.statuses, ctx.today), ctx.today, ctx.settings.purchaseLeadDays);
+  const due = toBuyWithin(materialNeeds(ctx.projects, ctx.orders, ctx.stock, ctx.today), ctx.today, ctx.settings.purchaseLeadDays);
   for (const projectId of [...new Set(due.map((l) => l.projectId))]) {
     const p = byId.get(projectId);
     if (!p) continue;
@@ -247,9 +445,9 @@ export function purchasingAlerts(ctx: PurchasingContext): Alert[] {
       id,
       kind: "purchase_due",
       level: days <= 0 ? "critical" : "warning",
-      title: `${mine.length} ${mine.length === 1 ? "material sin comprar" : "materiales sin comprar"}: ${when}`,
-      message: `El proyecto arranca el ${formatDate(p.startDate)}. Falta comprar: ${mine.map((l) => l.description).join(", ")}.`,
-      records: mine.map((l) => `${l.description} · faltan ${formatQty(l.remaining, l.unit)} · ${LINE_STATUS_LABELS[l.status].toLowerCase()}`),
+      title: `${mine.length} ${mine.length === 1 ? "material sin pedir" : "materiales sin pedir"}: ${when}`,
+      message: `El proyecto arranca el ${formatDate(p.startDate)}. Falta pedir: ${mine.map((l) => l.description).join(", ")}.`,
+      records: mine.map((l) => `${l.description} · faltan ${formatQty(l.toBuy, l.unit)} · ${NEED_STATUS_LABELS[l.status].toLowerCase()}`),
       resolutionKey: alertResolutionKey(id, p, ctx.today),
     });
   }
@@ -264,8 +462,8 @@ export function purchasingAlerts(ctx: PurchasingContext): Alert[] {
       id,
       kind: "purchase_cost",
       level,
-      title: `${o.materialName}: se pagó ${formatNumber(o.pct, 1)} % más que lo presupuestado`,
-      message: `Presupuestado ${formatCurrency(o.budgetUnitCost)} por ${o.unit || "unidad"}; se pagó ${formatCurrency(o.paidUnitCost)}${o.supplier ? ` a ${o.supplier}` : ""} el ${formatDate(o.date)} (${formatQty(o.quantity, o.unit)}): ${formatCurrency(o.overBy)} más.`,
+      title: `${o.materialName}: costó ${formatNumber(o.pct, 1)} % más que lo estimado`,
+      message: `Estimado ${formatCurrency(o.budgetUnitCost)} por ${o.unit || "unidad"}; costo real ${formatCurrency(o.paidUnitCost)}${o.supplier ? ` de ${o.supplier}` : ""} el ${formatDate(o.date)} (${formatQty(o.quantity, o.unit)}): ${formatCurrency(o.overBy)} más.`,
       impactAmount: o.overBy,
       records: [`Compra ${o.purchaseId} · ${formatDate(o.date)} · ${o.supplier ?? "sin proveedor"}`],
       resolutionKey: alertResolutionKey(id, p, ctx.today),
@@ -371,36 +569,6 @@ export function supplierPrices(history: PurchaseRecord[]): MaterialPrices[] {
       };
     })
     .sort((a, b) => a.materialName.localeCompare(b.materialName));
-}
-
-// ── Registrar una compra (una o varias líneas del mismo material) ──
-
-export interface PurchasePart {
-  projectId: string;
-  lineId: string;
-  quantity: number;
-}
-
-export interface RecordPurchaseInput {
-  materialId?: string;
-  materialName: string;
-  unit: string;
-  supplier: string;
-  /** Precio realmente pagado por unidad. */
-  unitCost: number;
-  date: string;
-  parts: PurchasePart[];
-  notes?: string;
-}
-
-export function recordPurchaseError(input: RecordPurchaseInput, today: string): string | null {
-  if (!input.supplier.trim()) return "Indicá el proveedor.";
-  if (!(input.unitCost > 0)) return "Indicá el precio pagado por unidad.";
-  if (!input.date) return "Indicá la fecha de la compra.";
-  if (input.date > today) return "La fecha de la compra no puede ser futura.";
-  if (input.parts.some((p) => !(p.quantity >= 0))) return "Las cantidades no pueden ser negativas.";
-  if (!input.parts.some((p) => p.quantity > 0)) return "Indicá la cantidad comprada.";
-  return null;
 }
 
 // ── Cotizador de materiales (solo materiales y su costo) ─────

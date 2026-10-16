@@ -14,6 +14,8 @@ export interface PlantOperator {
   name: string;
   role: string;
   active: boolean;
+  /** Días de la semana que trabaja (sin dato: lunes a viernes). */
+  workDays?: number[];
   /** Proyectos abiertos donde está asignado (código). */
   projects: string[];
   /** Horas cargadas en total (sin valor). */
@@ -47,6 +49,7 @@ export function plantView(projects: Project[], operators: Operator[]): { operato
       name: o.name,
       role: o.role,
       active: o.active,
+      workDays: o.workDays,
       projects: openProjectsOf(projects, o.id).map((p) => p.code),
       hours: hoursOf((op) => op === o.id),
     })),

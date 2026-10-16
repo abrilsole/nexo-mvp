@@ -71,7 +71,7 @@ beforeAll(async () => {
   laura = await signUp(db, "laura@demo.com", "Laura Gómez");
   org = (await db.query<{ organization_id: string }>("select organization_id from organization_members where user_id = $1", [laura])).rows[0].organization_id;
   const s = buildSeed(new Date());
-  const payload = workspacePayload(org, { projects: s.projects, operators: s.operators, stock: s.stock, requests: [], assignments: [], lineStatuses: [], settings: { ...DEFAULT_SETTINGS }, resolvedAlertIds: [] });
+  const payload = workspacePayload(org, { projects: s.projects, operators: s.operators, stock: s.stock, requests: [], assignments: [], orders: [], settings: { ...DEFAULT_SETTINGS }, resolvedAlertIds: [] });
   await asUser(db, laura, (tx) => tx.query("select reset_workspace($1::jsonb)", [JSON.stringify(payload)]));
   await db.query("insert into cost_settings (organization_id, overtime_multiplier) values ($1, 2)", [org]);
   await db.query(

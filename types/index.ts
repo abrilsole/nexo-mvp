@@ -156,16 +156,44 @@ export interface HourRate {
   category: HourCategory;
 }
 
-/** Estado de compra de una línea de materiales (Lote 5C): pendiente → cotizando → comprado → recibido. */
-export type LineStatus = "pending" | "quoting" | "purchased" | "received";
+/** Estado de una orden de compra (Lote 6). Pagada y Recibida van aparte. */
+export type OrderStatus = "draft" | "sent" | "invoiced";
+export type OrderReceived = "no" | "partial" | "yes";
 
-export interface PurchaseLineStatus {
+/** Línea de una orden: un material de una línea del costo presupuestado de un proyecto, con el costo real conseguido. */
+export interface PurchaseOrderLine {
+  id: string;
   projectId: string;
-  /** Línea de materiales del costo presupuestado. */
-  lineId: string;
-  status: LineStatus;
-  updatedBy: string;
-  updatedAt: string;
+  /** Línea de materiales del presupuesto que cubre. */
+  budgetLineId: string;
+  materialId?: string;
+  materialName: string;
+  unit: string;
+  quantity: number;
+  /** Costo unitario real conseguido (la negociación queda afuera del sistema). */
+  unitCost: number;
+  receivedQuantity: number;
+  note?: string;
+}
+
+/** Orden de compra (registro manual: sin mail ni banco). */
+export interface PurchaseOrder {
+  id: string;
+  /** Correlativo de la empresa: OC-0001. */
+  number: string;
+  supplier: string;
+  date: string;
+  status: OrderStatus;
+  invoiceNumber?: string;
+  invoiceAmount?: number;
+  invoiceDate?: string;
+  /** Información financiera: no cambia el costo. */
+  paid: boolean;
+  received: OrderReceived;
+  notes?: string;
+  lines: PurchaseOrderLine[];
+  createdBy: string;
+  createdAt: string;
 }
 
 export interface PurchaseEntry {
@@ -313,6 +341,11 @@ export interface Project {
   attachments: Attachment[];
   /** Presupuesto aprobado original. Se captura una sola vez y no se pisa. */
   baseline?: ProjectBaseline;
+  /**
+   * Estado de materiales calculado por la base (Lote 6). Solo lo trae el Jefe de planta, que no recibe costos ni órdenes;
+   * los demás roles lo derivan de las necesidades (materialsState).
+   */
+  materialsState?: "none" | "on_the_way" | "complete" | null;
 }
 
 /** Rubro que necesita un producto (Lote 6): horas estimadas para toda la cantidad y operarios que pide (sin nombre). */
@@ -388,6 +421,20 @@ export interface Operator {
   /** Usuario (auth) vinculado, si el operario entra al sistema. */
   userId?: string;
   email?: string;
+  createdAt: string;
+  /** Días de la semana que trabaja (0 = domingo … 6 = sábado). Sin dato: lunes a viernes (Lote 6 · Fase 3). */
+  workDays?: number[];
+}
+
+/** Excepción de un día puntual: "trabaja este sábado (4 h)" o "no viene el viernes". La edita el Jefe de planta. */
+export interface DayException {
+  operatorId: string;
+  date: string;
+  works: boolean;
+  /** Si trabaja: horas de ese día. Sin dato: la jornada de Configuración. */
+  hours?: number;
+  note?: string;
+  createdBy: string;
   createdAt: string;
 }
 

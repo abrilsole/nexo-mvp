@@ -10,7 +10,8 @@ import { isAssignable, productRubroHours, thresholdOf, VERDICT_LABELS, type Oper
 import { projectProduction, scheduleSignal } from "@/lib/production";
 import { rubroLabel } from "@/lib/rubros";
 import { useAppStore } from "@/store/use-app-store";
-import { useToday } from "@/store/selectors";
+import { useMaterialsStateOf, useToday } from "@/store/selectors";
+import { MaterialsBadge } from "@/components/purchasing/purchasing-projects";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ProductionBadge, ScheduleBadge, StatusBadge } from "@/components/shared/badges";
@@ -44,6 +45,7 @@ function ProjectCard({ project: p, onAssign }: { project: Project; onAssign: (d:
   const assignments = useAppStore((s) => s.assignments);
   const settings = useAppStore((s) => s.settings);
   const operators = useAppStore((s) => s.operators);
+  const materialsOf = useMaterialsStateOf();
   const production = projectProduction(p);
   const schedule = scheduleSignal(p, today, settings.dueSoonDays);
   const rows = productRubroHours(p, assignments, thresholdOf(settings), today);
@@ -53,7 +55,7 @@ function ProjectCard({ project: p, onAssign }: { project: Project; onAssign: (d:
     <Card>
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
-          <span className="text-slate-500">{p.code}</span> {p.name} <StatusBadge status={p.status} />
+          <span className="text-slate-500">{p.code}</span> {p.name} <StatusBadge status={p.status} /> <MaterialsBadge state={materialsOf(p)} />
         </CardTitle>
         <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
           <span>Producción:</span> <ProductionBadge status={production.status} />

@@ -10,8 +10,8 @@ describe("cada rol ve exactamente su menú", () => {
   it("Administrativo: todo, con Horas y Configuración (ahí están Usuarios)", () => {
     expect(menu("admin")).toEqual(["Dashboard", "Proyectos", "Alertas", "Horas", "Cotizador", "Stock", "Operarios", "Configuración"]);
   });
-  it("Compras: Dashboard, Proyectos, Alertas, Cotizador, Historial y Stock (Lote 5C, sin ítems Próximamente)", () => {
-    expect(menu("compras")).toEqual(["Dashboard", "Proyectos", "Alertas", "Cotizador", "Historial", "Stock"]);
+  it("Compras: Dashboard, Necesidades, Órdenes de compra, Alertas, Cotizador y Stock (Lote 6)", () => {
+    expect(menu("compras")).toEqual(["Dashboard", "Necesidades", "Órdenes de compra", "Alertas", "Cotizador", "Stock"]);
   });
   it("Jefe de planta: Resumen, Proyectos, Operarios, Asignaciones y Alertas", () => {
     expect(menu("jefe_planta")).toEqual(["Resumen", "Proyectos", "Operarios", "Asignaciones", "Alertas"]);

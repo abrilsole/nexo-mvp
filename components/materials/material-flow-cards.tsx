@@ -38,7 +38,7 @@ export function MaterialFlowCards({ project }: { project: Project }) {
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-          <Cell label="Comprado" value={t.purchased} hint="No es costo todavía" />
+          <Cell label="Recibido" value={t.purchased} hint="Llegó al proyecto; no es costo todavía" />
           <Cell label="Consumido" value={t.consumed} hint="Es costo" tone="cost" />
           <Cell label="Desperdiciado" value={t.wasted} hint="Es costo; no se reutiliza" tone="cost" />
           <Cell label="Recuperado" value={t.recovered} hint="Volvió al stock o quedó de sobrante" />

@@ -5,10 +5,14 @@
 import { useState } from "react";
 import type { RubroId, WorkAssignment } from "@/types";
 import { activeOperators } from "@/lib/operators";
-import { isAssignable, workdaysBetween } from "@/lib/plant";
+import { formatDate, formatNumber } from "@/lib/formatting";
+import { isAssignable } from "@/lib/plant";
+import { calendarCell, operatorWorkdays } from "@/lib/schedule";
 import { rubroLabel } from "@/lib/rubros";
 import { parseDecimal } from "@/lib/schemas";
 import { useAppStore } from "@/store/use-app-store";
+import { useMaterialsStateOf } from "@/store/selectors";
+import { MATERIALS_STATE_LABELS } from "@/lib/purchasing";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input, Select } from "@/components/ui/input";
@@ -32,6 +36,7 @@ function AssignmentForm({ draft, onClose }: { draft: AssignmentDraft; onClose: (
   const saveAssignment = useAppStore((s) => s.saveAssignment);
   const removeAssignment = useAppStore((s) => s.removeAssignment);
   const editing = !!draft.id;
+  const materialsOf = useMaterialsStateOf();
   const [projectId, setProjectId] = useState(draft.projectId ?? projects[0]?.id ?? "");
   const project = projects.find((p) => p.id === projectId);
   const [itemId, setItemId] = useState(draft.itemId ?? "");
@@ -44,7 +49,30 @@ function AssignmentForm({ draft, onClose }: { draft: AssignmentDraft; onClose: (
   const [to, setTo] = useState(draft.date ?? "");
   const [hours, setHours] = useState(draft.plannedHours ? String(draft.plannedHours).replace(".", ",") : "8");
   const [error, setError] = useState("");
-  const days = editing ? (from ? [from] : []) : from && to ? workdaysBetween(from, to) : [];
+  const exceptions = useAppStore((s) => s.dayExceptions);
+  const assignments = useAppStore((s) => s.assignments);
+  const hoursPerDay = useAppStore((s) => s.costSettings.hoursPerDay);
+  // Cada operario, en SUS días laborales (días de la semana y excepciones). Al editar, el día elegido.
+  const daysFor = (operatorId: string): string[] => {
+    if (editing) return from ? [from] : [];
+    const o = operators.find((x) => x.id === operatorId);
+    return from && to && o ? operatorWorkdays(o, exceptions, from, to) : [];
+  };
+  const total = picked.reduce((s, id) => s + daysFor(id).length, 0);
+  // Avisos (no bloquean): día no laborable o capacidad superada.
+  const planned = parseDecimal(hours) || 0;
+  const warnings = picked.flatMap((id) => {
+    const o = operators.find((x) => x.id === id);
+    if (!o) return [];
+    const dates = editing ? daysFor(id) : from && to && from === to ? [from] : [];
+    return dates.flatMap((d) => {
+      const others = assignments.filter((a) => a.id !== draft.id);
+      const cell = calendarCell(o, d, [...others, { id: "nueva", projectId, rubro: "carpinteria_madera", operatorId: id, date: d, plannedHours: planned, createdBy: "", createdAt: "" }], exceptions, hoursPerDay);
+      if (!cell.capacity.working) return [`${o.name} no trabaja el ${formatDate(d)} (${cell.capacity.reason.toLowerCase()}).`];
+      if (cell.over) return [`${o.name} quedaría con ${formatNumber(cell.planned)} h el ${formatDate(d)}: su capacidad es ${formatNumber(cell.capacity.hours)} h.`];
+      return [];
+    });
+  });
 
   const toggle = (id: string) => (editing ? setPicked([id]) : setPicked(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]));
 
@@ -52,9 +80,9 @@ function AssignmentForm({ draft, onClose }: { draft: AssignmentDraft; onClose: (
     e.preventDefault();
     if (!item || !chosenRubro) return setError("Elegí el producto y el rubro.");
     if (picked.length === 0) return setError("Elegí al menos un operario.");
-    if (days.length === 0) return setError(editing ? "Elegí el día." : "Elegí desde y hasta qué día (días hábiles).");
+    if (total === 0) return setError(editing ? "Elegí el día." : "Elegí desde y hasta qué día: en ese rango no hay días laborales de esas personas.");
     for (const operatorId of picked) {
-      for (const date of days) {
+      for (const date of daysFor(operatorId)) {
         const r = saveAssignment({ id: draft.id, projectId, itemId: item.id, rubro: chosenRubro, operatorId, date, plannedHours: parseDecimal(hours) });
         if (!r.ok) return setError(r.error);
       }
@@ -92,6 +120,11 @@ function AssignmentForm({ draft, onClose }: { draft: AssignmentDraft; onClose: (
             </Select>
           </Field>
         </div>
+        {project && materialsOf(project) && materialsOf(project) !== "complete" && (
+          <p role="status" className="rounded-md bg-amber-50 p-2 text-xs text-amber-900">
+            Materiales del proyecto: {MATERIALS_STATE_LABELS[materialsOf(project) ?? "none"].toLowerCase()}. Podés asignar igual; avisale a Compras si hace falta.
+          </p>
+        )}
         {need && (
           <p className="text-xs text-slate-500">
             Estimado: {need.hours} h en total · pide {need.workers} {need.workers === 1 ? "operario" : "operarios"}.
@@ -121,10 +154,17 @@ function AssignmentForm({ draft, onClose }: { draft: AssignmentDraft; onClose: (
             <Input id="as-hours" inputMode="decimal" value={hours} onChange={(e) => setHours(e.target.value)} />
           </Field>
         </div>
-        {!editing && days.length > 0 && picked.length > 0 && (
+        {!editing && total > 0 && (
           <p className="text-xs text-slate-600">
-            Se crean {days.length * picked.length} asignaciones ({picked.length} {picked.length === 1 ? "persona" : "personas"} × {days.length} días hábiles).
+            Se crean {total} asignaciones ({picked.length} {picked.length === 1 ? "persona" : "personas"}, cada una en sus días laborales del rango).
           </p>
+        )}
+        {warnings.length > 0 && (
+          <ul role="status" className="space-y-0.5 rounded-md bg-amber-50 p-2 text-xs text-amber-900">
+            {warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
         )}
         {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
         <DialogFooter className="gap-2">

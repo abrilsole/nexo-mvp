@@ -7,7 +7,8 @@ import { isRubroId } from "@/lib/rubros";
 import type {
   ActivityEvent,
   ProductRubro,
-  PurchaseLineStatus,
+  PurchaseOrder,
+  PurchaseOrderLine,
   ActualEntry,
   Attachment,
   BudgetLine,
@@ -16,6 +17,7 @@ import type {
   LaborValuation,
   MaterialRequest,
   MaterialUsageEntry,
+  DayException,
   Operator,
   Place,
   Project,
@@ -435,8 +437,14 @@ export function projectsFromRows(rows: ProjectRows): Project[] {
       stageLogs: stageLogs.get(id) ?? [],
       attachments: attachments.get(id) ?? [],
       baseline: baselineFromJson(r.baseline as Project["baseline"] | null),
+      ...("materials_state" in r ? { materialsState: materialsStateOf(r.materials_state) } : {}),
     };
   });
+}
+
+/** Estado de materiales que manda planta_workspace (el Jefe de planta no recibe costos ni órdenes). */
+function materialsStateOf(v: unknown): Project["materialsState"] {
+  return v === "none" || v === "on_the_way" || v === "complete" ? v : null;
 }
 
 // ── Pool de sobrantes ─────────────────────────────────────
@@ -486,6 +494,7 @@ export function operatorToRow(org: string, o: Operator, position: number): Row {
     user_id: o.userId ?? null,
     email: o.email ?? null,
     created_at: o.createdAt,
+    work_days: o.workDays ?? null,
   };
 }
 
@@ -499,6 +508,20 @@ export function operatorFromRow(r: Row): Operator {
     deactivatedAt: r.deactivated_at ? iso(r.deactivated_at) : undefined,
     userId: opt(r.user_id as string | null),
     email: opt(r.email as string | null),
+    createdAt: iso(r.created_at),
+    workDays: Array.isArray(r.work_days) ? (r.work_days as unknown[]).map(Number) : undefined,
+  };
+}
+
+/** Excepción de día laboral (Lote 6 · Fase 3). */
+export function dayExceptionFromRow(r: Row): DayException {
+  return {
+    operatorId: String(r.operator_id),
+    date: String(r.date),
+    works: r.works === true,
+    hours: r.hours === null || r.hours === undefined ? undefined : num(r.hours),
+    note: opt(r.note as string | null),
+    createdBy: String(r.created_by ?? ""),
     createdAt: iso(r.created_at),
   };
 }
@@ -728,18 +751,98 @@ export function assignmentToParams(a: Pick<WorkAssignment, "id" | "projectId" | 
   };
 }
 
-export function lineStatusFromRow(r: Row): PurchaseLineStatus {
-  const status = String(r.status);
+export function orderLineFromRow(r: Row): PurchaseOrderLine {
   return {
+    id: String(r.id),
     projectId: String(r.project_id),
-    lineId: String(r.line_id),
-    status: status === "quoting" || status === "purchased" || status === "received" ? status : "pending",
-    updatedBy: String(r.updated_by ?? ""),
-    updatedAt: iso(r.updated_at),
+    budgetLineId: String(r.budget_line_id),
+    materialId: opt(r.material_id as string | null),
+    materialName: String(r.material_name),
+    unit: String(r.unit ?? ""),
+    quantity: num(r.quantity),
+    unitCost: num(r.unit_cost),
+    receivedQuantity: num(r.received_quantity ?? 0),
+    note: opt(r.note as string | null),
   };
 }
 
-/** Elemento de line_statuses de compras_save (la base valida la línea y completa quién lo cambió). */
-export function lineStatusToParams(s: Pick<PurchaseLineStatus, "projectId" | "lineId" | "status">): Row {
-  return { project_id: s.projectId, line_id: s.lineId, status: s.status };
+/** Órdenes de compra con sus líneas (las líneas quitadas de un borrador no llegan). */
+export function ordersFromRows(orders: Row[], lines: Row[]): PurchaseOrder[] {
+  return orders.map((r) => {
+    const status = String(r.status);
+    const received = String(r.received);
+    return {
+      id: String(r.id),
+      number: String(r.number),
+      supplier: String(r.supplier),
+      date: String(r.date),
+      status: status === "sent" || status === "invoiced" ? status : "draft",
+      invoiceNumber: opt(r.invoice_number as string | null),
+      invoiceAmount: r.invoice_amount === null || r.invoice_amount === undefined ? undefined : num(r.invoice_amount),
+      invoiceDate: opt(r.invoice_date as string | null),
+      paid: r.paid === true,
+      received: received === "partial" || received === "yes" ? received : "no",
+      notes: opt(r.notes as string | null),
+      lines: lines.filter((l) => l.order_id === r.id && !l.removed_at).sort((a, b) => num(a.position) - num(b.position)).map(orderLineFromRow),
+      createdBy: String(r.created_by ?? ""),
+      createdAt: iso(r.created_at),
+    };
+  });
+}
+
+/** Argumento de compras_order_save (la base asigna el número y valida cada línea). */
+export function orderToParams(id: string, d: { supplier: string; date: string; notes?: string; lines: Array<Omit<PurchaseOrderLine, "receivedQuantity"> & { receivedQuantity?: number }> }): Row {
+  return {
+    id,
+    supplier: d.supplier,
+    date: d.date,
+    notes: d.notes ?? null,
+    lines: d.lines.map((l) => ({
+      id: l.id,
+      project_id: l.projectId,
+      budget_line_id: l.budgetLineId,
+      material_id: l.materialId ?? null,
+      material_name: l.materialName,
+      unit: l.unit,
+      quantity: l.quantity,
+      unit_cost: l.unitCost,
+      note: l.note ?? null,
+    })),
+  };
+}
+
+/** Órdenes de la demo para compras_load_orders (con su número, estado y recepciones). */
+export function orderSeedRows(orders: PurchaseOrder[]): { orders: Row[]; lines: Row[] } {
+  return {
+    orders: orders.map((o) => ({
+      id: o.id,
+      number: o.number,
+      supplier: o.supplier,
+      date: o.date,
+      status: o.status,
+      invoice_number: o.invoiceNumber ?? null,
+      invoice_amount: o.invoiceAmount ?? null,
+      invoice_date: o.invoiceDate ?? null,
+      paid: o.paid,
+      received: o.received,
+      notes: o.notes ?? null,
+      created_by: o.createdBy,
+      created_at: o.createdAt,
+    })),
+    lines: orders.flatMap((o) =>
+      o.lines.map((l, i) => ({
+        id: l.id,
+        order_id: o.id,
+        position: i,
+        project_id: l.projectId,
+        budget_line_id: l.budgetLineId,
+        material_id: l.materialId ?? null,
+        material_name: l.materialName,
+        unit: l.unit,
+        quantity: l.quantity,
+        unit_cost: l.unitCost,
+        received_quantity: l.receivedQuantity,
+      })),
+    ),
+  };
 }

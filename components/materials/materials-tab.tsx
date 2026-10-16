@@ -12,6 +12,7 @@ import { movementSentence, MOVEMENT_LABELS } from "@/lib/stock-labels";
 import { useAppStore } from "@/store/use-app-store";
 import { useIdentity } from "@/store/selectors";
 import { MaterialFlowCards } from "./material-flow-cards";
+import { MaterialCostsCard } from "./material-costs-card";
 import { PurchaseForm } from "./purchase-form";
 import { StockActionDialog, type StockAction, type StockTarget } from "@/components/stock/stock-action-dialog";
 import { formatCurrency, formatDate, formatNumber, formatQty, formatSignedCurrency } from "@/lib/formatting";
@@ -195,6 +196,7 @@ export function MaterialsTab({
 
   return (
     <div className="space-y-6">
+      {showCosts && <MaterialCostsCard project={project} />}
       <MaterialFlowCards project={project} />
       <PositionCard project={project} canManage={canManage} />
 

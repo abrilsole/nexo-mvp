@@ -6,7 +6,9 @@
 // ─────────────────────────────────────────────────────────────
 import type {
   WorkAssignment,
-  PurchaseLineStatus,
+  DayException,
+  PurchaseOrder,
+  PurchaseOrderLine,
   ActivityEvent,
   ActualEntry,
   ActualEntryType,
@@ -22,8 +24,10 @@ import type {
   ReusableMaterial,
   StageLog,
 } from "@/types";
-import { ACTUAL_TYPE_LABELS, DEMO_USERS, MATERIAL_CATALOG, STATUS_LABELS, STATUS_ORDER, type OtherCostCategory } from "./constants";
-import { actualInputCategory } from "./project-operations";
+import { ACTUAL_TYPE_LABELS, DEFAULT_SETTINGS, DEMO_USERS, MATERIAL_CATALOG, STATUS_LABELS, STATUS_ORDER, type OtherCostCategory } from "./constants";
+import { actualInputCategory, registerUsage } from "./project-operations";
+import { invoiceActivity, invoiceEntries, receiveOrder, receivedState } from "./purchasing";
+import { applyChange } from "./stock";
 import { budgetLineTotal } from "./calculations";
 import { toISODate } from "./formatting";
 import { rubroLabel } from "./rubros";
@@ -114,12 +118,13 @@ function material(id: string) {
 }
 
 /** Operarios de la demo: ids estables para vincular horas y asignaciones. */
-const OPERATOR_SPECS: Array<{ id: string; name: string; role: string; hourlyCost: number }> = [
+const OPERATOR_SPECS: Array<{ id: string; name: string; role: string; hourlyCost: number; workDays?: number[] }> = [
   { id: "op-juan", name: "Juan Pérez", role: "Carpintería", hourlyCost: 15_000 },
   { id: "op-diego", name: "Diego Sosa", role: "Armado", hourlyCost: 12_500 },
   { id: "op-marcos", name: "Marcos Gil", role: "Herrería", hourlyCost: 14_000 },
   { id: "op-lucia", name: "Lucía Ferreyra", role: "Embalaje y terminaciones", hourlyCost: 11_000 },
-  { id: "op-sofia", name: "Sofía Méndez", role: "Oficina técnica", hourlyCost: 15_000 },
+  // Sofía trabaja de lunes a jueves (Lote 6 · Fase 3): los viernes su celda del calendario queda en gris.
+  { id: "op-sofia", name: "Sofía Méndez", role: "Oficina técnica", hourlyCost: 15_000, workDays: [1, 2, 3, 4] },
 ];
 
 /** Horas máximas de una asignación del seed por día. */
@@ -132,7 +137,7 @@ class SeedBuilder {
   assignments: WorkAssignment[] = [];
   /** Días ya ocupados de cada operario (un día no se asigna dos veces en el trabajo ya hecho). */
   private busy = new Map<string, Set<number>>();
-  constructor(private readonly now: Date) {}
+  constructor(readonly now: Date) {}
 
   /** Próximo día hábil (lunes a viernes) libre del operario desde `from`. */
   private freeDay(operatorId: string, from: number): number {
@@ -209,6 +214,16 @@ class SeedBuilder {
   id(prefix: string) {
     this.seq += 1;
     return `${prefix}-${this.seq.toString().padStart(4, "0")}`;
+  }
+  /** El día hábil (lunes a viernes) número `n` desde hoy (n = 1 es el próximo). 0 es hoy, aunque sea fin de semana. */
+  workday(n: number): number {
+    let off = 0;
+    for (let k = 0; k < n; ) {
+      off += 1;
+      const dow = new Date(this.now.getFullYear(), this.now.getMonth(), this.now.getDate() + off).getDay();
+      if (dow !== 0 && dow !== 6) k += 1;
+    }
+    return off;
   }
   day(offset: number): string {
     const d = new Date(this.now);
@@ -448,12 +463,14 @@ export interface SeedState {
   operators: Operator[];
   /** Asignaciones del Jefe de planta: las pasadas (con sus horas cargadas) y las de hoy en adelante. */
   assignments: WorkAssignment[];
-  /** Estados de compra de ejemplo (Lote 5C): una línea cotizando y una ya recibida. */
-  lineStatuses: PurchaseLineStatus[];
+  /** Órdenes de compra del proyecto estrella: facturada y recibida, facturada y recibida en parte, borrador. */
+  orders: PurchaseOrder[];
   /** Stock inicial: se deriva de las compras, usos y sobrantes de la demo. */
   stock: StockState;
   /** Pool del modelo anterior (sólo para derivar el stock). */
   legacyPool: ReusableMaterial[];
+  /** Excepciones de días laborales (Lote 6 · Fase 3). */
+  dayExceptions: DayException[];
 }
 
 export const MAIN_DEMO_PROJECT_ID = "p-1042";
@@ -462,7 +479,7 @@ export const MAIN_DEMO_PROJECT_ID = "p-1042";
 export const STAR_PROJECT_ID = "p-1058";
 
 /**
- * Asignaciones de hoy en adelante (todavía sin horas): [día, operario, proyecto, producto, rubro, horas].
+ * Asignaciones de hoy en adelante (todavía sin horas): [día hábil desde hoy (0 = hoy), operario, proyecto, producto, rubro, horas].
  * Hoy Juan trabaja en las sillas del proyecto estrella: es lo que ve en "Mi día".
  */
 const UPCOMING: Array<[number, string, string, string, RubroId, number]> = [
@@ -963,14 +980,7 @@ export function buildSeed(now: Date = new Date()): SeedState {
         ],
         direct: { bought: 600_000, transport: 400_000, contingency: 300_000 },
       },
-      purchases: [
-        [-17, "multilaminado-18", 20, 98_000, "Maderera Oeste"],
-        [-16, "cano-40", 180, 10_500, "Hierros Sur"],
-      ],
-      usages: [
-        [-14, "multilaminado-18", 8, 0.5, 0.5, 98_000],
-        [-10, "cano-40", 120, 5, 0, 10_500],
-      ],
+      // Las compras de este proyecto salen de órdenes de compra (seedOrders): OC-0001, OC-0002 y OC-0003.
       products: [
         ["itm-mesas", "Mesa de comedor", 10, 10, [["carpinteria_madera", 60, 2], ["carpinteria_metalica", 20, 1], ["embalaje", 6, 1]]],
         ["itm-sillas", "Silla apilable", 100, 40, [["carpinteria_madera", 220, 2], ["carpinteria_metalica", 60, 1], ["embalaje", 20, 1]]],
@@ -1101,29 +1111,126 @@ export function buildSeed(now: Date = new Date()): SeedState {
     ];
   }
 
-  const operators: Operator[] = OPERATOR_SPECS.map((o) => ({ ...o, active: true, createdAt: b.at(-200, 9) }));
-  for (const [off, operatorId, projectId, itemId, rubro, hours] of UPCOMING) {
-    b.assignment(projectId, itemId, rubro, operatorId, off, hours);
+  const operators: Operator[] = OPERATOR_SPECS.map(({ workDays, ...o }) => ({ ...o, ...(workDays ? { workDays } : {}), active: true, createdAt: b.at(-200, 9) }));
+  for (const [n, operatorId, projectId, itemId, rubro, hours] of UPCOMING) {
+    b.assignment(projectId, itemId, rubro, operatorId, b.workday(n), hours);
     const project = projects.find((x) => x.id === projectId);
     if (project && !project.assignedOperatorIds.includes(operatorId)) project.assignedOperatorIds = [...project.assignedOperatorIds, operatorId];
   }
   const assignments = b.assignments;
-  const lineStatuses = seedLineStatuses(projects, b.at(0));
-  return { projects, operators, assignments, lineStatuses, stock: deriveLedgerFromLegacy(projects, b.pool), legacyPool: b.pool };
+  const ledger = deriveLedgerFromLegacy(projects, b.pool);
+  const { orders, stock } = seedOrders(b, projects, ledger);
+  return { projects, operators, assignments, orders, stock, legacyPool: b.pool, dayExceptions: seedDayExceptions(b) };
 }
 
-/** Compras: P-1053 cotiza el perfil; P-1045 recibió la melamina; P-1058 recibió el multilaminado, compró parte del caño y cotiza el tapacanto. */
-function seedLineStatuses(projects: Project[], now: string): PurchaseLineStatus[] {
-  const specs: Array<[code: string, materialId: string, status: PurchaseLineStatus["status"]]> = [
-    ["P-1053", "perfil-alu", "quoting"],
-    ["P-1045", "mel-blanca-18", "received"],
-    ["P-1058", "multilaminado-18", "received"],
-    ["P-1058", "cano-40", "purchased"],
-    ["P-1058", "tapacanto", "quoting"],
-  ];
-  return specs.flatMap(([code, materialId, status]) => {
-    const p = projects.find((x) => x.code === code);
-    const line = p?.budgetLines.find((l) => l.category === "materials" && l.materialId === materialId);
-    return p && line ? [{ projectId: p.id, lineId: line.id, status, updatedBy: DEMO_USERS.compras.name, updatedAt: now }] : [];
+/**
+ * Excepciones de días laborales (Lote 6 · Fase 3), para que el calendario del Jefe cuente la historia:
+ * - Juan trabaja el próximo sábado 4 h para adelantar las sillas del proyecto estrella.
+ * - Diego no viene el día hábil 2 (trámite): ya tenía 8 h asignadas, así que esa celda queda en rojo (8/0 h) y el Jefe
+ *   tiene que reasignar.
+ * - Si hoy es fin de semana, el equipo del día trabaja hoy (si no, "Mi día" quedaría vacío en la demo).
+ */
+function seedDayExceptions(b: SeedBuilder): DayException[] {
+  const at = b.at(-2, 9);
+  const out: DayException[] = [];
+  let sat = 1;
+  while (new Date(b.now.getFullYear(), b.now.getMonth(), b.now.getDate() + sat).getDay() !== 6) sat += 1;
+  out.push({ operatorId: "op-juan", date: b.day(sat), works: true, hours: 4, note: "Adelantar sillas de P-1058", createdBy: PLANTA, createdAt: at });
+  out.push({ operatorId: "op-diego", date: b.day(b.workday(2)), works: false, note: "Trámite personal", createdBy: PLANTA, createdAt: at });
+  const dow = b.now.getDay();
+  if (dow === 0 || dow === 6) {
+    for (const id of new Set(UPCOMING.filter(([n]) => n === 0).map(([, op]) => op))) {
+      if (!out.some((x) => x.operatorId === id && x.date === b.day(0))) {
+        out.push({ operatorId: id, date: b.day(0), works: true, note: "Guardia de fin de semana", createdBy: PLANTA, createdAt: at });
+      }
+    }
+  }
+  return out.sort((x, y) => x.date.localeCompare(y.date) || x.operatorId.localeCompare(y.operatorId));
+}
+
+/**
+ * Órdenes de compra del proyecto estrella (Lote 6), con su historia coherente:
+ *  - OC-0001 Maderera Oeste: multilaminado. Facturada, pagada y recibida (ya se consumió una parte).
+ *  - OC-0002 Hierros Sur: caño. Facturada a $10.500 contra $9.000 estimado (alerta), sin pagar, recibida en parte.
+ *  - OC-0003 Herrajes Sur: tapacanto. Borrador.
+ */
+function seedOrders(b: SeedBuilder, projects: Project[], ledger: StockState): { orders: PurchaseOrder[]; stock: StockState } {
+  const star = projects.find((p) => p.id === STAR_PROJECT_ID);
+  if (!star) return { orders: [], stock: ledger };
+  const lineOf = (materialId: string) => {
+    const l = star.budgetLines.find((x) => x.category === "materials" && x.materialId === materialId);
+    if (!l) throw new Error(`Seed: falta ${materialId} en ${star.code}`);
+    return l;
+  };
+  const line = (id: string, materialId: string, quantity: number, unitCost: number, received: number): PurchaseOrderLine => {
+    const l = lineOf(materialId);
+    return { id, projectId: star.id, budgetLineId: l.id, materialId, materialName: l.description, unit: l.unit, quantity, unitCost, receivedQuantity: received };
+  };
+  const order = (n: number, supplier: string, day: number, status: PurchaseOrder["status"], lines: PurchaseOrderLine[], extra: Partial<PurchaseOrder> = {}): PurchaseOrder => ({
+    id: `oc-demo-${n}`,
+    number: `OC-${String(n).padStart(4, "0")}`,
+    supplier,
+    date: b.day(day),
+    status,
+    paid: false,
+    received: receivedState(lines),
+    lines,
+    createdBy: DEMO_USERS.compras.name,
+    createdAt: b.at(day, 11),
+    ...extra,
   });
+  const orders = [
+    order(1, "Maderera Oeste", -18, "invoiced", [line("ocl-demo-1", "multilaminado-18", 20, 98_000, 20)], {
+      invoiceNumber: "A-0003-00012841",
+      invoiceAmount: 1_960_000,
+      invoiceDate: b.day(-17),
+      paid: true,
+    }),
+    order(2, "Hierros Sur", -16, "invoiced", [line("ocl-demo-2", "cano-40", 300, 10_500, 180)], {
+      invoiceNumber: "B-0001-00004410",
+      invoiceAmount: 3_150_000,
+      invoiceDate: b.day(-14),
+    }),
+    order(3, "Herrajes Sur", -1, "draft", [line("ocl-demo-3", "tapacanto", 200, 1_050, 0)]),
+  ];
+  const ctx = { actor: DEMO_USERS.compras.name, now: b.at(-1, 12) };
+  // OC-0001: la factura (compra real) y el lote recibido; después se usó una parte en las mesas.
+  const inv1 = invoiceEntries(orders[0], { invoiceNumber: orders[0].invoiceNumber ?? "", invoiceAmount: 1_960_000, invoiceDate: b.day(-17) }, ctx.actor, b.at(-17, 12));
+  const inv2 = invoiceEntries(orders[1], { invoiceNumber: orders[1].invoiceNumber ?? "", invoiceAmount: 3_150_000, invoiceDate: b.day(-14) }, ctx.actor, b.at(-14, 12));
+  star.purchaseEntries = [...star.purchaseEntries, ...inv1, ...inv2];
+  star.activity = [
+    ...orders.slice(0, 2).flatMap((o, i) => invoiceActivity(o, star.id, o.invoiceNumber ?? "", ctx.actor, b.at(i === 0 ? -17 : -14, 12), (k) => `act-oc-${i}-${k}`)),
+    ...star.activity,
+  ].sort((x, y) => y.at.localeCompare(x.at));
+  let stock = ledger;
+  for (const o of orders.slice(0, 2)) {
+    const pending = { ...o, lines: o.lines.map((l) => ({ ...l, receivedQuantity: 0 })), received: "no" as const };
+    const res = receiveOrder(pending, o.lines.map((l) => ({ lineId: l.id, quantity: l.receivedQuantity })), projects, { ...ctx, today: b.day(o === orders[0] ? -16 : -12) });
+    // Ids estables (la demo se deriva igual siempre): un lote y un movimiento por línea recibida.
+    const ids = new Map(res.sent.map((x) => [x.lot_id, x.line_id]));
+    const lotId = (id: string) => `lot-${ids.get(id) ?? id}`;
+    stock = applyChange(stock, {
+      lots: res.change.lots.map((l) => ({ ...l, id: lotId(l.id), createdAt: b.at(-12, 10) })),
+      movements: res.change.movements.map((m) => ({ ...m, id: `mov-${ids.get(m.lotId) ?? m.id}`, lotId: lotId(m.lotId), createdAt: b.at(-12, 10) })),
+    });
+  }
+  // Consumo de multilaminado en las mesas (sale del lote de OC-0001): el mismo registro que carga el taller.
+  const mat = material("multilaminado-18");
+  const used = registerUsage(
+    star,
+    stock,
+    { materialId: mat.id, materialName: mat.name, unit: mat.unit, consumed: 8, waste: 0.5, date: b.day(-12), itemId: "itm-mesas" },
+    DEFAULT_SETTINGS,
+    { actor: PLANTA, now: b.at(-12, 15), role: "owner" },
+  );
+  // Ids estables también para el consumo (movimientos y lo que el proyecto referencia de ellos).
+  const known = new Set(stock.movements.map((m) => m.id));
+  let json = JSON.stringify({ project: used.project, stock: used.stock });
+  used.stock.movements.filter((m) => !known.has(m.id)).forEach((m, i) => {
+    json = json.split(`"${m.id}"`).join(`"mov-uso-${i + 1}"`);
+  });
+  const stable = JSON.parse(json) as { project: Project; stock: StockState };
+  projects[projects.indexOf(star)] = stable.project;
+  stock = stable.stock;
+  return { orders, stock };
 }

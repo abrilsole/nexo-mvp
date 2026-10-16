@@ -4,7 +4,7 @@ import { useCallback, useMemo } from "react";
 import type { Alert, EconomicHealth, Project } from "@/types";
 import { allAlerts, openAlertCount, projectHealth, sortAlerts, splitAlerts } from "@/lib/alerts";
 import { plantAlerts } from "@/lib/plant";
-import { purchasingAlerts } from "@/lib/purchasing";
+import { materialNeeds, materialsState, purchasingAlerts, type MaterialNeed, type MaterialsState } from "@/lib/purchasing";
 import type { RoleKey } from "@/lib/permissions";
 import { projectEconomics, type ProjectEconomics } from "@/lib/calculations";
 import { todayISO } from "@/lib/formatting";
@@ -23,20 +23,40 @@ export function usePlantAlerts(): Alert[] {
   const operators = useAppStore((s) => s.operators);
   const settings = useAppStore((s) => s.settings);
   const hoursPerDay = useAppStore((s) => s.costSettings.hoursPerDay);
+  const dayExceptions = useAppStore((s) => s.dayExceptions);
   const today = useToday();
   return useMemo(
-    () => sortAlerts(plantAlerts({ projects, assignments, operators, settings, hoursPerDay, today })),
-    [projects, assignments, operators, settings, hoursPerDay, today],
+    () => sortAlerts(plantAlerts({ projects, assignments, operators, settings, hoursPerDay, today, dayExceptions })),
+    [projects, assignments, operators, settings, hoursPerDay, today, dayExceptions],
   );
 }
 
 /** Alertas de Compras (Lote 5C): material sin comprar a pocos días y compras más caras que lo presupuestado. */
 export function usePurchasingAlerts(): Alert[] {
   const projects = useAppStore((s) => s.projects);
-  const statuses = useAppStore((s) => s.lineStatuses);
+  const orders = useAppStore((s) => s.orders);
+  const stock = useAppStore((s) => s.stock);
   const settings = useAppStore((s) => s.settings);
   const today = useToday();
-  return useMemo(() => purchasingAlerts({ projects, statuses, settings, today }), [projects, statuses, settings, today]);
+  return useMemo(() => purchasingAlerts({ projects, orders, stock, settings, today }), [projects, orders, stock, settings, today]);
+}
+
+/**
+ * Estado de materiales de cada proyecto: el que calculó la base (Jefe de planta) o el derivado de las necesidades.
+ * La función que devuelve no lee el estado: se puede usar en listas.
+ */
+export function useMaterialsStateOf(): (project: Project) => MaterialsState | null {
+  const needs = useMaterialNeeds();
+  return useCallback((project: Project) => (project.materialsState !== undefined ? project.materialsState : materialsState(needs, project.id)), [needs]);
+}
+
+/** Necesidades de compra de los proyectos aprobados (Lote 6): por comprar, en orden de compra o recibido. */
+export function useMaterialNeeds(): MaterialNeed[] {
+  const projects = useAppStore((s) => s.projects);
+  const orders = useAppStore((s) => s.orders);
+  const stock = useAppStore((s) => s.stock);
+  const today = useToday();
+  return useMemo(() => materialNeeds(projects, orders, stock, today), [projects, orders, stock, today]);
 }
 
 /** Número del menú "Alertas" de cada rol (el Operario no tiene alertas). */
