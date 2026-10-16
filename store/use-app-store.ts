@@ -11,6 +11,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import type {
   AlertSettings,
   CostSettings,
+  DayException,
   HourRate,
   AppRole,
   Attachment,
@@ -39,7 +40,8 @@ import { materialKey } from "@/lib/material-reconciliation";
 import { createClient } from "@/lib/supabase/client";
 import { lotToRow } from "@/lib/supabase/mappers";
 import * as remote from "@/lib/supabase/workspace";
-import { DEFAULT_COST_SETTINGS, type Workspace, type WorkspaceData } from "@/lib/supabase/workspace";
+import { DEFAULT_COST_SETTINGS, type ScheduleChange, type Workspace, type WorkspaceData } from "@/lib/supabase/workspace";
+import { exceptionError, workDaysError } from "@/lib/schedule";
 import { tallerCalls } from "@/lib/supabase/taller";
 import {
   invoiceActivity,
@@ -68,6 +70,8 @@ interface AppState {
   /** Estado de compra de las líneas de materiales (Lote 5C). */
   /** Órdenes de compra (Lote 6). Las ven Administrativo y Compras. */
   orders: PurchaseOrder[];
+  /** Excepciones de días laborales (Lote 6 · Fase 3). */
+  dayExceptions: DayException[];
   operators: Operator[];
   stock: StockState;
   requests: MaterialRequest[];
@@ -192,6 +196,8 @@ interface AppState {
   saveAssignment: (input: AssignmentInput & { id?: string }) => Result<string>;
   /** Quita una asignación. */
   removeAssignment: (id: string) => Result;
+  /** Días laborales y excepciones de un operario: Jefe de planta o Administrativo. */
+  saveSchedule: (operatorId: string, change: ScheduleChange) => Result;
   /** Crea (sin id) o modifica una orden en Borrador. Devuelve el id. Compras o Administrativo. */
   saveOrder: (draft: OrderDraft & { id?: string }) => Result<string>;
   sendOrder: (id: string) => Result;
@@ -230,6 +236,7 @@ export function demoData(): WorkspaceData {
     projects: seed.projects,
     assignments: seed.assignments,
     orders: seed.orders,
+    dayExceptions: seed.dayExceptions,
     operators: seed.operators,
     stock: seed.stock,
     requests: [],
@@ -242,6 +249,7 @@ const EMPTY_DATA: WorkspaceData = {
   projects: [],
   assignments: [],
   orders: [],
+  dayExceptions: [],
   operators: [],
   stock: EMPTY_STOCK,
   requests: [],
@@ -392,7 +400,7 @@ export const useAppStore = create<AppState>()(
         const run2 = queue.then(async (): Promise<Result> => {
           try {
             await remote.replaceWorkspace(createClient(), org, isDemo ? data : null);
-            set({ ...data, isDemo, currentMode: "admin", actingOperatorId: null, syncStatus: "idle", syncError: null });
+            set({ ...data, dayExceptions: data.dayExceptions ?? [], isDemo, currentMode: "admin", actingOperatorId: null, syncStatus: "idle", syncError: null });
             return { ok: true, value: undefined };
           } catch (e) {
             set({ syncStatus: "error", syncError: `No se pudo guardar: ${errorMessage(e)}` });
@@ -416,6 +424,7 @@ export const useAppStore = create<AppState>()(
 
       return {
         ...EMPTY_DATA,
+        dayExceptions: [],
         costSettings: { ...DEFAULT_COST_SETTINGS },
         hourRates: DEFAULT_HOUR_RATES.map((r) => ({ ...r })),
         priceHistory: [],
@@ -437,6 +446,7 @@ export const useAppStore = create<AppState>()(
             projects: ws.projects,
             assignments: ws.assignments,
             orders: ws.orders,
+            dayExceptions: ws.dayExceptions ?? [],
             operators: ws.operators,
             stock: ws.stock,
             requests: ws.requests,
@@ -793,6 +803,28 @@ export const useAppStore = create<AppState>()(
             if (who !== "admin" && who !== "jefe_planta") throw new ops.DomainError("Las asignaciones las hace el Jefe de planta.");
             set({ assignments: get().assignments.filter((a) => a.id !== id) });
             void persistRemote((db) => remote.removeAssignment(db, id));
+            return undefined;
+          }),
+        saveSchedule: (operatorId, change) =>
+          run(() => {
+            const who = effectiveIdentity(get()).roleKey;
+            if (who !== "admin" && who !== "jefe_planta") throw new ops.DomainError("Los días laborales los define el Jefe de planta.");
+            const operator = get().operators.find((o) => o.id === operatorId);
+            if (!operator) throw new ops.DomainError("Operario no encontrado.");
+            const error = (change.workDays ? workDaysError(change.workDays) : null) ?? (change.add ?? []).map(exceptionError).find(Boolean) ?? null;
+            if (error) throw new ops.DomainError(error);
+            const now = new Date().toISOString();
+            const by = effectiveIdentity(get()).actor;
+            const added: DayException[] = (change.add ?? []).map((x) => ({ operatorId, date: x.date, works: x.works, hours: x.works ? x.hours : undefined, note: x.note?.trim() || undefined, createdBy: by, createdAt: now }));
+            const touched = new Set([...added.map((x) => x.date), ...(change.remove ?? [])]);
+            // Se guarda con la función de planta: se actualiza la memoria sin volver a escribir los operarios.
+            set({
+              operators: change.workDays
+                ? get().operators.map((o) => (o.id === operatorId ? { ...o, workDays: [...new Set(change.workDays)].sort((a, b) => a - b) } : o))
+                : get().operators,
+              dayExceptions: [...get().dayExceptions.filter((x) => !(x.operatorId === operatorId && touched.has(x.date))), ...added].sort((a, b) => a.date.localeCompare(b.date)),
+            });
+            void persistRemote((db) => remote.saveSchedule(db, operatorId, change));
             return undefined;
           }),
         saveOrder: (draft) =>

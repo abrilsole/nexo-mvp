@@ -5,11 +5,12 @@
 // desvío de horas por producto + rubro (con lo de cada operario) y las alertas de planta.
 // Ver docs/PRODUCCION.md.
 // ─────────────────────────────────────────────────────────────
-import type { Alert, AlertSettings, Operator, Project, RubroId, WorkAssignment } from "@/types";
+import type { Alert, AlertSettings, DayException, Operator, Project, RubroId, WorkAssignment } from "@/types";
 import { alertBase, alertResolutionKey } from "./alerts";
 import { splitOvertime } from "./capacity";
 import { rubroLabel } from "./rubros";
 import { daysBetween, formatDate, formatNumber } from "./formatting";
+import { calendarCell } from "./schedule";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -302,6 +303,8 @@ export interface PlantContext {
   settings: AlertSettings;
   hoursPerDay: number;
   today: string;
+  /** Excepciones de días laborales (Fase 3): definen la capacidad de cada día junto con los días del operario. */
+  dayExceptions?: DayException[];
 }
 
 /**
@@ -339,8 +342,9 @@ export function plantAlerts(ctx: PlantContext): Alert[] {
   const days = [...new Set(ctx.assignments.filter((a) => a.date >= ctx.today).map((a) => `${a.operatorId}|${a.date}`))];
   for (const k of days) {
     const [operatorId, date] = k.split("|");
-    const load = dayLoad(ctx.assignments, operatorId, date, ctx.hoursPerDay);
-    if (!load.overloaded) continue;
+    const operator = ctx.operators.find((o) => o.id === operatorId) ?? { id: operatorId };
+    const cell = calendarCell(operator, date, ctx.assignments, ctx.dayExceptions ?? [], ctx.hoursPerDay);
+    if (!cell.over) continue;
     const mine = ctx.assignments.filter((a) => a.operatorId === operatorId && a.date === date).sort((a, b) => b.plannedHours - a.plannedHours);
     const p = byId.get(mine[0].projectId);
     if (!p) continue;
@@ -351,8 +355,12 @@ export function plantAlerts(ctx: PlantContext): Alert[] {
           id: `overload:${operatorId}:${date}`,
           kind: "overload",
           level: "warning",
-          title: `${name(operatorId)} tiene ${formatNumber(load.planned)} h asignadas el ${formatDate(date)}`,
-          message: `Su jornada es de ${formatNumber(ctx.hoursPerDay)} h: ${formatNumber(load.overtimeHours)} h serían horas extra.`,
+          title: cell.capacity.working
+            ? `${name(operatorId)} tiene ${formatNumber(cell.planned)} h asignadas el ${formatDate(date)}`
+            : `${name(operatorId)} no trabaja el ${formatDate(date)} y tiene ${formatNumber(cell.planned)} h asignadas`,
+          message: cell.capacity.working
+            ? `Ese día puede ${formatNumber(cell.capacity.hours)} h (${cell.capacity.reason.toLowerCase()}): ${formatNumber(cell.overBy)} h de más.`
+            : `${cell.capacity.reason}. Hay que reasignar esas horas.`,
           records: mine.map((a) => `${byId.get(a.projectId)?.code ?? a.projectId} · ${rubroLabel(a.rubro)} · ${formatNumber(a.plannedHours)} h`),
         },
         p,

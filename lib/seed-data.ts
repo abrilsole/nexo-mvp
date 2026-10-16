@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────
 import type {
   WorkAssignment,
+  DayException,
   PurchaseOrder,
   PurchaseOrderLine,
   ActivityEvent,
@@ -117,12 +118,13 @@ function material(id: string) {
 }
 
 /** Operarios de la demo: ids estables para vincular horas y asignaciones. */
-const OPERATOR_SPECS: Array<{ id: string; name: string; role: string; hourlyCost: number }> = [
+const OPERATOR_SPECS: Array<{ id: string; name: string; role: string; hourlyCost: number; workDays?: number[] }> = [
   { id: "op-juan", name: "Juan Pérez", role: "Carpintería", hourlyCost: 15_000 },
   { id: "op-diego", name: "Diego Sosa", role: "Armado", hourlyCost: 12_500 },
   { id: "op-marcos", name: "Marcos Gil", role: "Herrería", hourlyCost: 14_000 },
   { id: "op-lucia", name: "Lucía Ferreyra", role: "Embalaje y terminaciones", hourlyCost: 11_000 },
-  { id: "op-sofia", name: "Sofía Méndez", role: "Oficina técnica", hourlyCost: 15_000 },
+  // Sofía trabaja de lunes a jueves (Lote 6 · Fase 3): los viernes su celda del calendario queda en gris.
+  { id: "op-sofia", name: "Sofía Méndez", role: "Oficina técnica", hourlyCost: 15_000, workDays: [1, 2, 3, 4] },
 ];
 
 /** Horas máximas de una asignación del seed por día. */
@@ -135,7 +137,7 @@ class SeedBuilder {
   assignments: WorkAssignment[] = [];
   /** Días ya ocupados de cada operario (un día no se asigna dos veces en el trabajo ya hecho). */
   private busy = new Map<string, Set<number>>();
-  constructor(private readonly now: Date) {}
+  constructor(readonly now: Date) {}
 
   /** Próximo día hábil (lunes a viernes) libre del operario desde `from`. */
   private freeDay(operatorId: string, from: number): number {
@@ -212,6 +214,16 @@ class SeedBuilder {
   id(prefix: string) {
     this.seq += 1;
     return `${prefix}-${this.seq.toString().padStart(4, "0")}`;
+  }
+  /** El día hábil (lunes a viernes) número `n` desde hoy (n = 1 es el próximo). 0 es hoy, aunque sea fin de semana. */
+  workday(n: number): number {
+    let off = 0;
+    for (let k = 0; k < n; ) {
+      off += 1;
+      const dow = new Date(this.now.getFullYear(), this.now.getMonth(), this.now.getDate() + off).getDay();
+      if (dow !== 0 && dow !== 6) k += 1;
+    }
+    return off;
   }
   day(offset: number): string {
     const d = new Date(this.now);
@@ -457,6 +469,8 @@ export interface SeedState {
   stock: StockState;
   /** Pool del modelo anterior (sólo para derivar el stock). */
   legacyPool: ReusableMaterial[];
+  /** Excepciones de días laborales (Lote 6 · Fase 3). */
+  dayExceptions: DayException[];
 }
 
 export const MAIN_DEMO_PROJECT_ID = "p-1042";
@@ -465,7 +479,7 @@ export const MAIN_DEMO_PROJECT_ID = "p-1042";
 export const STAR_PROJECT_ID = "p-1058";
 
 /**
- * Asignaciones de hoy en adelante (todavía sin horas): [día, operario, proyecto, producto, rubro, horas].
+ * Asignaciones de hoy en adelante (todavía sin horas): [día hábil desde hoy (0 = hoy), operario, proyecto, producto, rubro, horas].
  * Hoy Juan trabaja en las sillas del proyecto estrella: es lo que ve en "Mi día".
  */
 const UPCOMING: Array<[number, string, string, string, RubroId, number]> = [
@@ -1097,16 +1111,41 @@ export function buildSeed(now: Date = new Date()): SeedState {
     ];
   }
 
-  const operators: Operator[] = OPERATOR_SPECS.map((o) => ({ ...o, active: true, createdAt: b.at(-200, 9) }));
-  for (const [off, operatorId, projectId, itemId, rubro, hours] of UPCOMING) {
-    b.assignment(projectId, itemId, rubro, operatorId, off, hours);
+  const operators: Operator[] = OPERATOR_SPECS.map(({ workDays, ...o }) => ({ ...o, ...(workDays ? { workDays } : {}), active: true, createdAt: b.at(-200, 9) }));
+  for (const [n, operatorId, projectId, itemId, rubro, hours] of UPCOMING) {
+    b.assignment(projectId, itemId, rubro, operatorId, b.workday(n), hours);
     const project = projects.find((x) => x.id === projectId);
     if (project && !project.assignedOperatorIds.includes(operatorId)) project.assignedOperatorIds = [...project.assignedOperatorIds, operatorId];
   }
   const assignments = b.assignments;
   const ledger = deriveLedgerFromLegacy(projects, b.pool);
   const { orders, stock } = seedOrders(b, projects, ledger);
-  return { projects, operators, assignments, orders, stock, legacyPool: b.pool };
+  return { projects, operators, assignments, orders, stock, legacyPool: b.pool, dayExceptions: seedDayExceptions(b) };
+}
+
+/**
+ * Excepciones de días laborales (Lote 6 · Fase 3), para que el calendario del Jefe cuente la historia:
+ * - Juan trabaja el próximo sábado 4 h para adelantar las sillas del proyecto estrella.
+ * - Diego no viene el día hábil 2 (trámite): ya tenía 8 h asignadas, así que esa celda queda en rojo (8/0 h) y el Jefe
+ *   tiene que reasignar.
+ * - Si hoy es fin de semana, el equipo del día trabaja hoy (si no, "Mi día" quedaría vacío en la demo).
+ */
+function seedDayExceptions(b: SeedBuilder): DayException[] {
+  const at = b.at(-2, 9);
+  const out: DayException[] = [];
+  let sat = 1;
+  while (new Date(b.now.getFullYear(), b.now.getMonth(), b.now.getDate() + sat).getDay() !== 6) sat += 1;
+  out.push({ operatorId: "op-juan", date: b.day(sat), works: true, hours: 4, note: "Adelantar sillas de P-1058", createdBy: PLANTA, createdAt: at });
+  out.push({ operatorId: "op-diego", date: b.day(b.workday(2)), works: false, note: "Trámite personal", createdBy: PLANTA, createdAt: at });
+  const dow = b.now.getDay();
+  if (dow === 0 || dow === 6) {
+    for (const id of new Set(UPCOMING.filter(([n]) => n === 0).map(([, op]) => op))) {
+      if (!out.some((x) => x.operatorId === id && x.date === b.day(0))) {
+        out.push({ operatorId: id, date: b.day(0), works: true, note: "Guardia de fin de semana", createdBy: PLANTA, createdAt: at });
+      }
+    }
+  }
+  return out.sort((x, y) => x.date.localeCompare(y.date) || x.operatorId.localeCompare(y.operatorId));
 }
 
 /**

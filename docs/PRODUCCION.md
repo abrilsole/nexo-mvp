@@ -57,6 +57,25 @@ No puede existir una hora "sin rubro":
   4. **Pendientes:** alertas abiertas, compras sin hacer y asignaciones sin cubrir.
 - La solapa **Historial** se sacó (ruta, menú y código).
 
+## Días laborales y calendario (Lote 6 · Fase 3, `lib/schedule.ts`)
+
+- **Días laborales por operario:** qué días de la semana trabaja (sin dato: lunes a viernes). Los edita el Jefe de planta
+  en Planta → Operarios → **Días**.
+- **Excepciones por fecha:** "trabaja este sábado (4 h)" o "no viene el viernes", con nota. Mandan sobre los días de la
+  semana. Quitar una excepción la marca (no se borra).
+- **Capacidad de un día** = 0 si no trabaja; si trabaja, las horas de la excepción o la jornada de Configuración.
+- **Calendario** (Planta → Asignaciones): grilla operarios × días (lunes a domingo). Cada celda muestra **horas asignadas /
+  capacidad** (ej. 6/8 h) y un chip por proyecto, uno al lado del otro, con un color por proyecto. **Rojo** si lo asignado
+  pasa la capacidad (también si tiene horas un día que no trabaja); **gris** si no es día laborable.
+- **Asignar un rango** crea asignaciones solo en los días laborales de cada persona. Asignar en un día no laborable o por
+  encima de la capacidad **avisa pero no bloquea**; queda en rojo en el calendario y como alerta de planta para reasignar.
+- En la base: `operators.work_days`, tabla `operator_day_exceptions` (la leen Administrativo y Jefe de planta) y la
+  función `planta_save_schedule` (Jefe de planta o Administrativo). Migración
+  `supabase/migrations/20261021120000_lote6_dias_laborales.sql`. Tests: `tests/calendario.test.ts`,
+  `tests/calendario-pantallas.test.tsx`, `tests/db/dias-laborales.test.ts`.
+- **Demo:** Sofía trabaja de lunes a jueves (sus viernes en gris); Juan trabaja el próximo sábado 4 h para adelantar las
+  sillas; Diego no viene el segundo día hábil y ya tenía 8 h asignadas (celda en rojo + alerta para reasignar).
+
 ## Demo: la historia de punta a punta
 
 - **Proyecto estrella:** P-1058 "Restaurante Costanera – 10 mesas y 100 sillas".

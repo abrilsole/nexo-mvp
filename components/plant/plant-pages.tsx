@@ -2,10 +2,11 @@
 // Jefe de planta: Resumen, Proyectos, Operarios y Alertas. Sin importes: ni costos, ni precios, ni rentabilidad.
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { AlertTriangle, CalendarClock, ClipboardList, UsersRound } from "lucide-react";
+import { AlertTriangle, CalendarClock, CalendarDays, ClipboardList, UsersRound } from "lucide-react";
 import { formatDate, formatNumber } from "@/lib/formatting";
 import { activeOperators, visibleOperators } from "@/lib/operators";
-import { dayLoad, pendingAssignments, workWeek } from "@/lib/plant";
+import { pendingAssignments } from "@/lib/plant";
+import { calendarCell, workDaysLabel, workDaysOf } from "@/lib/schedule";
 import { plantView } from "@/lib/role-views";
 import { rubroLabel } from "@/lib/rubros";
 import { useAppStore } from "@/store/use-app-store";
@@ -16,7 +17,10 @@ import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+import { ScheduleDialog } from "./schedule-dialog";
 
 export function PlantSummaryPage() {
   const today = useToday();
@@ -27,7 +31,8 @@ export function PlantSummaryPage() {
   const alerts = usePlantAlerts();
   const pending = useMemo(() => pendingAssignments(projects, assignments, today), [projects, assignments, today]);
   const todays = assignments.filter((a) => a.date === today);
-  const loads = operators.map((o) => ({ o, load: dayLoad(assignments, o.id, today, hoursPerDay) }));
+  const exceptions = useAppStore((s) => s.dayExceptions);
+  const loads = operators.map((o) => ({ o, load: calendarCell(o, today, assignments, exceptions, hoursPerDay) }));
   const label = (projectId: string, itemId: string | undefined) => {
     const p = projects.find((x) => x.id === projectId);
     return `${p?.code ?? projectId} · ${p?.items.find((i) => i.id === itemId)?.name ?? "producto"}`;
@@ -39,7 +44,7 @@ export function PlantSummaryPage() {
       <PageHeader title="Resumen de planta" subtitle={`Hoy, ${formatDate(today)}. Jornada: ${formatNumber(hoursPerDay)} h.`} />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatLink icon={CalendarClock} label="Asignaciones de hoy" value={String(todays.length)} href="/planta/asignaciones" />
-        <StatLink icon={UsersRound} label="Operarios con horas extra hoy" value={String(loads.filter((l) => l.load.overloaded).length)} href="/planta/asignaciones" tone={loads.some((l) => l.load.overloaded) ? "warn" : undefined} />
+        <StatLink icon={UsersRound} label="Operarios pasados de su capacidad hoy" value={String(loads.filter((l) => l.load.over).length)} href="/planta/asignaciones" tone={loads.some((l) => l.load.over) ? "warn" : undefined} />
         <StatLink icon={ClipboardList} label="Pendientes de asignar" value={String(pending.length)} href="/planta/asignaciones" tone={pending.length ? "warn" : undefined} />
         <StatLink icon={AlertTriangle} label="Alertas de planta" value={String(alerts.length)} href="/planta/alertas" tone={alerts.length ? "warn" : undefined} />
       </div>
@@ -59,10 +64,11 @@ export function PlantSummaryPage() {
                   </span>
                 </span>
                 <span className="flex items-center gap-2">
-                  <span className="text-xs tabular text-slate-500">
-                    {formatNumber(load.planned)}/{formatNumber(hoursPerDay)} h
+                  <span className="text-xs tabular text-slate-500" title={load.capacity.reason}>
+                    {formatNumber(load.planned)}/{formatNumber(load.capacity.hours)} h
                   </span>
-                  {load.overloaded && <Badge tone="yellow">+{formatNumber(load.overtimeHours)} h extra</Badge>}
+                  {!load.capacity.working && <Badge tone="gray">No trabaja hoy</Badge>}
+                  {load.over && <Badge tone="red">Se pasa {formatNumber(load.overBy)} h</Badge>}
                 </span>
               </li>
             ))}
@@ -88,16 +94,19 @@ export function PlantOperatorsPage() {
   const projects = useAppStore((s) => s.projects);
   const allOperators = useAppStore((s) => s.operators);
   const assignments = useAppStore((s) => s.assignments);
+  const exceptions = useAppStore((s) => s.dayExceptions);
   const hoursPerDay = useAppStore((s) => s.costSettings.hoursPerDay);
   const [showInactive, setShowInactive] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const operators = visibleOperators(allOperators, showInactive);
   const view = useMemo(() => plantView(projects, operators), [projects, operators]);
-  const week = workWeek(today);
-  const code = (id: string) => projects.find((p) => p.id === id)?.code ?? id;
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Operarios" subtitle="Especialidad, disponibilidad y asignaciones de la semana. Sin costos." />
+      <PageHeader
+        title="Operarios"
+        subtitle={`Especialidad, días laborales (con sus excepciones) y disponibilidad. La capacidad de un día laboral es la jornada de ${formatNumber(hoursPerDay)} h (Configuración). Sin costos.`}
+      />
       <label className="flex items-center gap-2 text-sm text-slate-700">
         <input type="checkbox" className="size-4" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Ver también los dados de baja
       </label>
@@ -107,16 +116,17 @@ export function PlantOperatorsPage() {
             <THead>
               <TR>
                 <TH>Operario</TH>
-                <TH>Disponible hoy</TH>
-                {week.map((d) => (
-                  <TH key={d} className="min-w-28">{formatDate(d).slice(0, 5)}</TH>
-                ))}
+                <TH>Días laborales</TH>
+                <TH>Excepciones próximas</TH>
+                <TH>Hoy</TH>
                 <TH className="text-right">Horas cargadas</TH>
+                <TH />
               </TR>
             </THead>
             <TBody>
               {view.operators.map((o) => {
-                const load = dayLoad(assignments, o.id, today, hoursPerDay);
+                const cell = calendarCell(o, today, assignments, exceptions, hoursPerDay);
+                const next = exceptions.filter((x) => x.operatorId === o.id && x.date >= today);
                 return (
                   <TR key={o.id} className="align-top">
                     <TD className="font-medium text-slate-900">
@@ -124,21 +134,32 @@ export function PlantOperatorsPage() {
                       <span className="block text-xs font-normal text-slate-500">{o.role}</span>
                       {!o.active && <Badge tone="gray">De baja</Badge>}
                     </TD>
-                    <TD className="whitespace-nowrap tabular">
-                      {o.active ? (load.overloaded ? <Badge tone="yellow">+{formatNumber(load.overtimeHours)} h extra</Badge> : `${formatNumber(Math.max(0, hoursPerDay - load.planned))} h`) : "—"}
-                    </TD>
-                    {week.map((d) => (
-                      <TD key={d} className="text-xs">
-                        {assignments
-                          .filter((a) => a.operatorId === o.id && a.date === d)
-                          .map((a) => (
-                            <div key={a.id} className="break-words">
-                              {code(a.projectId)} · {formatNumber(a.plannedHours)} h
+                    <TD className="text-sm">{workDaysLabel(workDaysOf(o))}</TD>
+                    <TD className="text-xs">
+                      {next.length === 0
+                        ? "—"
+                        : next.map((x) => (
+                            <div key={x.date} className="break-words">
+                              {formatDate(x.date)}: {x.works ? `trabaja ${formatNumber(x.hours ?? hoursPerDay)} h` : "no trabaja"}
+                              {x.note && <span className="text-slate-500"> ({x.note})</span>}
                             </div>
                           ))}
-                      </TD>
-                    ))}
+                    </TD>
+                    <TD className="whitespace-nowrap tabular text-sm">
+                      {!o.active ? "—" : (
+                        <span className={cn(cell.over && "font-semibold text-red-700", !cell.capacity.working && "text-slate-500")} title={cell.capacity.reason}>
+                          {cell.capacity.working || cell.planned > 0 ? `${formatNumber(cell.planned)}/${formatNumber(cell.capacity.hours)} h` : "No trabaja"}
+                        </span>
+                      )}
+                    </TD>
                     <TD className="text-right tabular">{formatNumber(o.hours)} h</TD>
+                    <TD className="text-right">
+                      {o.active && (
+                        <Button size="sm" variant="outline" onClick={() => setEditing(o.id)} aria-label={`Días laborales de ${o.name}`}>
+                          <CalendarDays /> Días
+                        </Button>
+                      )}
+                    </TD>
                   </TR>
                 );
               })}
@@ -146,6 +167,7 @@ export function PlantOperatorsPage() {
           </Table>
         </CardContent>
       </Card>
+      <ScheduleDialog operatorId={editing} onClose={() => setEditing(null)} />
     </div>
   );
 }

@@ -5,7 +5,7 @@
 // alcanza con comparar referencias).
 // ─────────────────────────────────────────────────────────────
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { AlertSettings, AppRole, CostSettings, HourRate, MaterialRequest, Operator, PriceRecord, Project, PurchaseOrder, ValueCorrection, WorkAssignment } from "@/types";
+import type { AlertSettings, AppRole, CostSettings, DayException, HourRate, MaterialRequest, Operator, PriceRecord, Project, PurchaseOrder, ValueCorrection, WorkAssignment } from "@/types";
 import { DEFAULT_FINANCIAL_PCT, DEFAULT_HOUR_RATES, DEFAULT_HOURS_PER_DAY, DEFAULT_OVERTIME_MULTIPLIER, DEFAULT_SETTINGS } from "@/lib/constants";
 import type { StockState } from "@/lib/stock";
 import type { TallerCall } from "./taller";
@@ -38,6 +38,7 @@ import {
   orderSeedRows,
   orderToParams,
   ordersFromRows,
+  dayExceptionFromRow,
   type ChildKey,
 } from "./mappers";
 
@@ -45,6 +46,8 @@ export interface WorkspaceData {
   projects: Project[];
   /** Asignaciones del Jefe de planta (Lote 5B). Las lee Administrativo y Jefe de planta; el Operario, las suyas. */
   assignments: WorkAssignment[];
+  /** Excepciones de días laborales por operario (Lote 6 · Fase 3). Las leen Administrativo y Jefe de planta. */
+  dayExceptions?: DayException[];
   /** Órdenes de compra con sus líneas (Lote 6). Las leen Administrativo y Compras. */
   orders: PurchaseOrder[];
   operators: Operator[];
@@ -138,6 +141,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     corrections,
     assignments,
     orders,
+    dayExceptions,
   ] = await Promise.all([
     check(await db.from("projects").select("*").eq("organization_id", org).order("created_at", { ascending: false })) as Record<
       string,
@@ -163,6 +167,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     loadOptional(db, "value_corrections", org, correctionFromRow),
     loadAssignments(db, org),
     loadOrders(db, org),
+    loadDayExceptions(db, org),
   ]);
 
   const domainProjects = projectsFromRows({ projects, budgetLines, purchaseEntries, materialUsages, actualEntries, activity, items, stageLogs, attachments });
@@ -191,6 +196,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     corrections,
     assignments,
     orders,
+    dayExceptions,
     projects: domainProjects,
     operators: operatorsAt(operators.map(operatorFromRow), priceHistory, todayISO()),
     stock,
@@ -216,6 +222,13 @@ async function loadAssignments(db: SupabaseClient, org: string): Promise<WorkAss
 }
 
 /** Órdenes de compra y sus líneas (sin las tablas todavía: lista vacía). */
+/** Excepciones de días laborales vigentes (las quitadas quedan con removed_at). Sin la tabla todavía: lista vacía. */
+async function loadDayExceptions(db: SupabaseClient, org: string): Promise<DayException[]> {
+  const { data, error } = await db.from("operator_day_exceptions").select("*").eq("organization_id", org).is("removed_at", null).order("date");
+  if (error || !data) return [];
+  return (data as Record<string, unknown>[]).map(dayExceptionFromRow);
+}
+
 async function loadOrders(db: SupabaseClient, org: string): Promise<PurchaseOrder[]> {
   const [o, l] = await Promise.all([
     db.from("purchase_orders").select("*").eq("organization_id", org).order("number"),
@@ -360,6 +373,7 @@ interface StaffWorkspaceJson {
   assignments?: Row[];
   purchase_orders?: Row[];
   purchase_order_lines?: Row[];
+  day_exceptions?: Row[];
   hours_per_day?: number | string;
   alert_settings?: Partial<AlertSettings> | null;
 }
@@ -389,6 +403,7 @@ async function loadStaffWorkspace(db: SupabaseClient, user: { id: string; email?
     corrections: [],
     assignments: (json.assignments ?? []).map(assignmentFromRow),
     orders: ordersFromRows(json.purchase_orders ?? [], json.purchase_order_lines ?? []),
+    dayExceptions: (json.day_exceptions ?? []).map(dayExceptionFromRow),
     demoSeeded: true,
     isDemo: false,
     stockMigrated: false,
@@ -522,6 +537,26 @@ export async function setCompletedUnits(db: SupabaseClient, projectId: string, i
   check(await db.rpc("planta_set_completed_units", { p: { project_id: projectId, item_id: itemId, units } }));
 }
 
+/** Días laborales y excepciones de un operario (Jefe de planta o Administrativo). */
+export async function saveSchedule(db: SupabaseClient, operatorId: string, change: ScheduleChange) {
+  check(await db.rpc("planta_save_schedule", { p: scheduleParams(operatorId, change) }));
+}
+
+export interface ScheduleChange {
+  workDays?: number[];
+  add?: Array<Pick<DayException, "date" | "works" | "hours" | "note">>;
+  remove?: string[];
+}
+
+export function scheduleParams(operatorId: string, c: ScheduleChange): Record<string, unknown> {
+  return {
+    operator_id: operatorId,
+    ...(c.workDays ? { work_days: c.workDays } : {}),
+    exceptions: (c.add ?? []).map((x) => ({ date: x.date, works: x.works, hours: x.hours ?? null, note: x.note ?? null })),
+    removed: c.remove ?? [],
+  };
+}
+
 /** Quita una asignación (queda marcada en la base, no se borra). */
 export async function removeAssignment(db: SupabaseClient, id: string) {
   check(await db.rpc("planta_remove_assignment", { p_id: id }));
@@ -606,6 +641,11 @@ export async function replaceWorkspace(db: SupabaseClient, org: string, data: Wo
   if (data?.assignments.length) check(await db.rpc("planta_load_assignments", { p: { assignments: data.assignments.map(assignmentSeedRow) } }));
   // Las órdenes de compra de la demo, con su número y estado (las compras reales y el stock ya vienen en el resto).
   if (data?.orders.length) check(await db.rpc("compras_load_orders", { p: orderSeedRows(data.orders) }));
+  // Excepciones de días laborales de la demo (los días de cada operario ya vienen en operators).
+  for (const opId of new Set((data?.dayExceptions ?? []).map((x) => x.operatorId))) {
+    const exceptions = (data?.dayExceptions ?? []).filter((x) => x.operatorId === opId);
+    check(await db.rpc("planta_save_schedule", { p: scheduleParams(opId, { add: exceptions }) }));
+  }
   // Con la demo cargada la empresa queda como demo; al vaciar, deja de serlo.
   check(await db.from("organizations").update({ is_demo: data !== null }).eq("id", org));
 }

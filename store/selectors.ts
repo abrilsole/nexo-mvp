@@ -23,10 +23,11 @@ export function usePlantAlerts(): Alert[] {
   const operators = useAppStore((s) => s.operators);
   const settings = useAppStore((s) => s.settings);
   const hoursPerDay = useAppStore((s) => s.costSettings.hoursPerDay);
+  const dayExceptions = useAppStore((s) => s.dayExceptions);
   const today = useToday();
   return useMemo(
-    () => sortAlerts(plantAlerts({ projects, assignments, operators, settings, hoursPerDay, today })),
-    [projects, assignments, operators, settings, hoursPerDay, today],
+    () => sortAlerts(plantAlerts({ projects, assignments, operators, settings, hoursPerDay, today, dayExceptions })),
+    [projects, assignments, operators, settings, hoursPerDay, today, dayExceptions],
   );
 }
 

@@ -127,6 +127,7 @@ El pedido fue "Cotizador de materiales: variante para Compras que solo trabaja c
 ## Archivos
 
 - `supabase/migrations/20261018120000_lote5c_compras.sql`: estados de línea, `compras_save` y `compras_workspace` con estados (Lote 5C).
+- `supabase/migrations/20261021120000_lote6_dias_laborales.sql`: días laborales y excepciones por operario; los edita el Jefe de planta (o Administrativo) con `planta_save_schedule` (Lote 6).
 - `supabase/migrations/20261020120000_lote6_ordenes_de_compra.sql`: órdenes de compra, stock solo consulta para Compras y estado de materiales (Lote 6).
 - `supabase/migrations/20261016120000_lote5a_roles_usuarios_vigencia.sql`: roles, funciones de lectura, usuarios, precios con vigencia y valores congelados. Sin DROP ni DELETE.
 - `supabase/manual/20261016120100_lote5a_manual.sql`: **se corre a mano** porque tiene DROP y DELETE. Hace dos cosas:

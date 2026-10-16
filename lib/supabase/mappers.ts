@@ -17,6 +17,7 @@ import type {
   LaborValuation,
   MaterialRequest,
   MaterialUsageEntry,
+  DayException,
   Operator,
   Place,
   Project,
@@ -493,6 +494,7 @@ export function operatorToRow(org: string, o: Operator, position: number): Row {
     user_id: o.userId ?? null,
     email: o.email ?? null,
     created_at: o.createdAt,
+    work_days: o.workDays ?? null,
   };
 }
 
@@ -506,6 +508,20 @@ export function operatorFromRow(r: Row): Operator {
     deactivatedAt: r.deactivated_at ? iso(r.deactivated_at) : undefined,
     userId: opt(r.user_id as string | null),
     email: opt(r.email as string | null),
+    createdAt: iso(r.created_at),
+    workDays: Array.isArray(r.work_days) ? (r.work_days as unknown[]).map(Number) : undefined,
+  };
+}
+
+/** Excepción de día laboral (Lote 6 · Fase 3). */
+export function dayExceptionFromRow(r: Row): DayException {
+  return {
+    operatorId: String(r.operator_id),
+    date: String(r.date),
+    works: r.works === true,
+    hours: r.hours === null || r.hours === undefined ? undefined : num(r.hours),
+    note: opt(r.note as string | null),
+    createdBy: String(r.created_by ?? ""),
     createdAt: iso(r.created_at),
   };
 }

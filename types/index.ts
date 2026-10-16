@@ -422,6 +422,20 @@ export interface Operator {
   userId?: string;
   email?: string;
   createdAt: string;
+  /** Días de la semana que trabaja (0 = domingo … 6 = sábado). Sin dato: lunes a viernes (Lote 6 · Fase 3). */
+  workDays?: number[];
+}
+
+/** Excepción de un día puntual: "trabaja este sábado (4 h)" o "no viene el viernes". La edita el Jefe de planta. */
+export interface DayException {
+  operatorId: string;
+  date: string;
+  works: boolean;
+  /** Si trabaja: horas de ese día. Sin dato: la jornada de Configuración. */
+  hours?: number;
+  note?: string;
+  createdBy: string;
+  createdAt: string;
 }
 
 export interface MaterialRequest {
