@@ -14,7 +14,6 @@ export const SECTION_LABELS: Record<string, string> = {
   projects: "Proyectos",
   alerts: "Alertas",
   quotes: "Cotizador",
-  history: "Historial",
   stock: "Stock",
   operators: "Operarios",
   settings: "Configuración",

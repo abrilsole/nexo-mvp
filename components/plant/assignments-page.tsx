@@ -158,23 +158,23 @@ export function AssignmentsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Pendientes de asignar</CardTitle>
-          <p className="text-sm text-slate-500">Rubros donde el presupuesto pidió más operarios de los que hay asignados desde hoy. Primero los que entregan antes.</p>
+          <p className="text-sm text-slate-500">Producto + rubro donde se pidieron más operarios de los que hay asignados. Primero lo que se entrega antes. Cuando todo está asignado, la lista queda vacía.</p>
         </CardHeader>
         <CardContent>
           {pending.length === 0 ? (
-            <p className="text-sm text-slate-500">No hay rubros pendientes de asignar.</p>
+            <p className="text-sm text-slate-500">Todo está asignado: no queda nada pendiente.</p>
           ) : (
             <ul className="divide-y divide-slate-100">
               {pending.map((r) => (
-                <li key={`${r.projectId}-${r.rubro}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                <li key={`${r.projectId}-${r.itemId}-${r.rubro}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
                   <span className="min-w-0 break-words">
-                    <strong>{r.projectCode}</strong> {r.projectName} · {rubroLabel(r.rubro)}
+                    <strong>{r.projectCode}</strong> {r.projectName} · <strong>{r.itemName}</strong> · {rubroLabel(r.rubro)}
                     <span className="block text-xs text-slate-500">
-                      Pide {r.workers} · asignados {r.assigned} · entrega {formatDate(r.dueDate)}
+                      Pide {r.workers} {r.workers === 1 ? "operario" : "operarios"} · asignados {r.assigned} · {formatNumber(r.hours)} h estimadas · entrega {formatDate(r.dueDate)}
                       {r.daysLeft < 0 ? " (vencida)" : ` (faltan ${r.daysLeft} días)`}
                     </span>
                   </span>
-                  <Button size="sm" variant="outline" onClick={() => setDraft({ projectId: r.projectId, rubro: r.rubro, date: today })}>
+                  <Button size="sm" variant="outline" onClick={() => setDraft({ projectId: r.projectId, itemId: r.itemId, rubro: r.rubro, date: today })}>
                     <Pencil /> Asignar
                   </Button>
                 </li>

@@ -25,7 +25,7 @@ import type {
   StageLog,
   StockLot,
   UnitCostOrigin,
-  RubroId,
+  WorkAssignment,
 } from "@/types";
 import {
   ACTUAL_TYPE_LABELS,
@@ -42,6 +42,8 @@ import { actualMessage, activity, createId, leftoverMessage, purchaseMessage, us
 import { categoryAlertLevel, LEVEL_RANK } from "./alerts";
 import { formatPercent, formatQty, todayISO } from "./formatting";
 import { materialKey } from "./material-reconciliation";
+import { productInputError, type ProductInput } from "./production";
+import { rubroDef } from "./rubros";
 import { unresolvedMaterial } from "./material-flow";
 import { assertExecutable, assertTransition, checkHours, isBuyer, isManager, RuleError } from "./project-rules";
 import {
@@ -374,7 +376,7 @@ export function registerUsage(
   assertExecutable(project, "consumo de material");
   assertCanWork(project, ctx);
   if (input.itemId && !project.items.some((i) => i.id === input.itemId)) {
-    throw new DomainError("El mueble elegido no existe en este proyecto.");
+    throw new DomainError("El producto elegido no existe en este proyecto.");
   }
   const key = materialKey(input.materialId, input.materialName);
   const used = consumeMaterial(
@@ -475,20 +477,16 @@ export function addActual(project: Project, input: ActualInput, settings: AlertS
   return touch(updated, ctx.now, [...deviationEvents(project, updated, settings, ctx), activity("cost", ctx.actor, actualMessage(entry), ctx.now)]);
 }
 
+/**
+ * Horas cargadas (Lote 6): SIEMPRE contra una asignación (producto + rubro + operario + día).
+ * Proyecto, producto, rubro, operario y fecha salen de la asignación: no se tipean.
+ */
 export interface HoursInput {
-  /** Gestión elige al operario. Un operario siempre carga a su nombre (se ignora este campo). */
-  operatorId?: string;
-  date: string;
+  assignmentId: string;
   hours: number;
-  /** Tipo de trabajo (corte, armado, laqueado…). */
-  workType: string;
-  stage?: StageKey;
-  itemId?: string;
+  /** Tipo de trabajo (por defecto, el rubro). */
+  workType?: string;
   comment?: string;
-  /** Rubro del proyecto en el que trabajó (Lote 5B: las horas se cargan por rubro). */
-  rubro?: RubroId;
-  /** Asignación del Jefe de planta que se confirma o corrige. */
-  assignmentId?: string;
   /** Jornada de Configuración: por encima se pide confirmar (aviso, no bloqueo). */
   workdayHours?: number;
   /** Confirma una carga por encima de la jornada. */
@@ -502,6 +500,7 @@ export interface HoursInput {
 export function logHours(
   project: Project,
   operators: Operator[],
+  assignments: WorkAssignment[],
   input: HoursInput,
   settings: AlertSettings,
   ctx: Ctx,
@@ -510,39 +509,33 @@ export function logHours(
 ): Project {
   assertExecutable(project, "horas de trabajo");
   assertCanWork(project, ctx);
+  const a = assignments.find((x) => x.id === input.assignmentId);
+  if (!a || a.projectId !== project.id) throw new DomainError("Las horas se cargan contra una asignación (producto, rubro, operario y día).");
   const isOperator = roleOf(ctx) === "operator";
-  const operatorId = isOperator ? ctx.operatorId : input.operatorId;
-  const op = operators.find((o) => o.id === operatorId);
-  if (!op) throw new DomainError(isOperator ? "Tu usuario no está vinculado a un operario." : "Elegí el operario.");
+  if (isOperator && a.operatorId !== ctx.operatorId) throw new RuleError("Esa asignación no es tuya.");
+  const op = operators.find((o) => o.id === a.operatorId);
+  if (!op) throw new DomainError("Operario no encontrado.");
   if (!op.active) throw new DomainError(`${op.name} está dado de baja: reactivalo en Operarios para cargarle horas.`);
-  if (isOperator && input.operatorId && input.operatorId !== op.id) {
-    throw new RuleError("Solo podés cargar tus propias horas.");
-  }
-  if (!isOperator && !project.assignedOperatorIds.includes(op.id)) {
-    throw new RuleError(`${op.name} no está asignado a este proyecto. Asignalo primero.`);
-  }
-  if (input.itemId && !project.items.some((i) => i.id === input.itemId)) {
-    throw new DomainError("El mueble elegido no existe en este proyecto.");
-  }
-  const check = checkHours(project.actualEntries, op.id, input.date, input.hours, todayISO(), input.workdayHours);
+  const check = checkHours(project.actualEntries, op.id, a.date, input.hours, todayISO(), input.workdayHours);
   if (check.level === "block") throw new RuleError(check.message ?? "Horas inválidas.");
   if (check.level === "warn" && !input.confirmHighHours) throw new RuleError(`${check.message} Confirmá para guardarlas.`);
 
-  const hourlyCost = costAt(op, input.date);
+  const workType = input.workType?.trim() || rubroDef(a.rubro).label;
+  const hourlyCost = costAt(op, a.date);
   const entry: ActualEntry = {
     id: createId("act"),
     projectId: project.id,
-    date: input.date,
+    date: a.date,
     type: "labor",
     category: "labor",
-    description: `${input.workType} — ${op.name}`,
+    description: `${workType} — ${op.name}`,
     amount: Math.round(input.hours * hourlyCost * 100) / 100,
-    labor: { role: input.workType, workerName: op.name, hours: input.hours, hourlyCost },
+    labor: { role: workType, workerName: op.name, hours: input.hours, hourlyCost },
     operatorId: op.id,
-    stage: input.stage ?? (project.status as StageKey),
-    itemId: input.itemId,
-    rubro: input.rubro,
-    assignmentId: input.assignmentId,
+    stage: project.status as StageKey,
+    itemId: a.itemId,
+    rubro: a.rubro,
+    assignmentId: a.id,
     notes: input.comment,
     createdBy: ctx.actor,
     createdAt: ctx.now,
@@ -616,29 +609,50 @@ export function reassignForDeactivation(
   ]);
 }
 
-// ── Muebles del proyecto ──────────────────────────────────────
+// ── Productos del proyecto (antes "muebles") ─────────────────
 
-export function addItem(project: Project, input: { name: string; description?: string; quantity: number }, ctx: Ctx): Project {
-  assertManager(ctx, "Editar los muebles");
+/** Alta de un producto con sus rubros (horas estimadas y operarios pedidos). Lo hace el Administrativo. */
+export function addItem(project: Project, input: ProductInput, ctx: Ctx): Project {
+  assertManager(ctx, "Editar los productos");
   assertOpen(project);
-  const name = input.name.trim();
-  if (name.length < 2) throw new DomainError("Ingresá el nombre del mueble.");
-  if (!(input.quantity >= 1)) throw new DomainError("La cantidad debe ser al menos 1.");
-  const item: ProjectItem = { id: createId("itm"), name, description: input.description?.trim() || undefined, quantity: input.quantity };
+  const error = productInputError(input);
+  if (error) throw new DomainError(error);
+  const item: ProjectItem = {
+    id: createId("itm"),
+    name: input.name.trim(),
+    description: input.description?.trim() || undefined,
+    quantity: input.quantity,
+    rubros: input.rubros,
+    completedUnits: 0,
+  };
   return touch({ ...project, items: [...project.items, item] }, ctx.now, [
-    activity("stage", ctx.actor, `Se agregó el mueble “${name}”.`, ctx.now),
+    activity("stage", ctx.actor, `Se agregó el producto “${item.name}” × ${item.quantity}.`, ctx.now),
+  ]);
+}
+
+/** Cambia nombre, cantidad o rubros de un producto. La cantidad no puede quedar por debajo de lo ya terminado. */
+export function updateItem(project: Project, itemId: string, input: ProductInput, ctx: Ctx): Project {
+  assertManager(ctx, "Editar los productos");
+  assertOpen(project);
+  const current = project.items.find((i) => i.id === itemId);
+  if (!current) throw new DomainError("Producto no encontrado.");
+  const error = productInputError(input, current.completedUnits);
+  if (error) throw new DomainError(error);
+  const next: ProjectItem = { ...current, name: input.name.trim(), description: input.description?.trim() || undefined, quantity: input.quantity, rubros: input.rubros };
+  return touch({ ...project, items: project.items.map((i) => (i.id === itemId ? next : i)) }, ctx.now, [
+    activity("stage", ctx.actor, `Se actualizó el producto “${next.name}”.`, ctx.now),
   ]);
 }
 
 export function removeItem(project: Project, itemId: string, ctx: Ctx): Project {
-  assertManager(ctx, "Editar los muebles");
+  assertManager(ctx, "Editar los productos");
   assertOpen(project);
   const used =
     project.materialUsages.some((u) => u.itemId === itemId) ||
     project.actualEntries.some((a) => a.itemId === itemId) ||
     project.attachments.some((a) => a.itemId === itemId) ||
     project.stageLogs.some((l) => l.itemId === itemId);
-  if (used) throw new DomainError("Ese mueble ya tiene materiales, horas, archivos o notas asociadas: no se puede quitar.");
+  if (used) throw new DomainError("Ese producto ya tiene materiales, horas, archivos o notas asociadas: no se puede quitar.");
   return touch({ ...project, items: project.items.filter((i) => i.id !== itemId) }, ctx.now, []);
 }
 

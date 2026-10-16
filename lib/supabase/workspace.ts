@@ -503,6 +503,14 @@ export async function saveAssignment(db: SupabaseClient, a: WorkAssignment) {
   check(await db.rpc("planta_save_assignment", { p: assignmentToParams(a) }));
 }
 
+/** Asignación de la demo para planta_load_assignments (con quién y cuándo la creó). */
+const assignmentSeedRow = (a: WorkAssignment) => ({ ...assignmentToParams(a), created_by: a.createdBy, created_at: a.createdAt });
+
+/** Unidades terminadas de un producto (Jefe de planta o Administrativo; la base valida el rango). */
+export async function setCompletedUnits(db: SupabaseClient, projectId: string, itemId: string, units: number) {
+  check(await db.rpc("planta_set_completed_units", { p: { project_id: projectId, item_id: itemId, units } }));
+}
+
 /** Quita una asignación (queda marcada en la base, no se borra). */
 export async function removeAssignment(db: SupabaseClient, id: string) {
   check(await db.rpc("planta_remove_assignment", { p_id: id }));
@@ -579,7 +587,7 @@ export function workspacePayload(org: string, data: WorkspaceData | null): Recor
 export async function replaceWorkspace(db: SupabaseClient, org: string, data: WorkspaceData | null) {
   check(await db.rpc("reset_workspace", { p_data: workspacePayload(org, data) }));
   // Las asignaciones de la demo se cargan con la misma función que usa el Jefe de planta.
-  for (const a of data?.assignments ?? []) await saveAssignment(db, a);
+  if (data?.assignments.length) check(await db.rpc("planta_load_assignments", { p: { assignments: data.assignments.map(assignmentSeedRow) } }));
   // Los estados de compra de la demo, con la misma función que usa Compras.
   if (data?.lineStatuses.length) await comprasSave(db, { line_statuses: data.lineStatuses.map(lineStatusToParams) });
   // Con la demo cargada la empresa queda como demo; al vaciar, deja de serlo.

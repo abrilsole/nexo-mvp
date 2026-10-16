@@ -95,3 +95,18 @@ export async function signUp(db: PGlite, email: string, name: string): Promise<s
   );
   return r.rows[0].id;
 }
+
+/**
+ * Lote 6: toda hora es contra una asignación. Crea (como `userId`, Administrativo o Jefe de planta) la asignación de
+ * un operario en el mostrador de P-1042 ese día y devuelve su id.
+ */
+export async function assignFor(db: PGlite, userId: string, operatorId: string, date: string, id = `asg-${operatorId}-${date}`): Promise<string> {
+  // Datos cargados antes de la migración del Lote 6 (migrateFrom): el producto todavía no tenía rubros.
+  await db.query(`update project_items set rubros = '[{"rubro":"carpinteria_madera","hours":30,"workers":1}]' where id = 'itm-mostrador' and rubros = '[]'`);
+  await asUser(db, userId, (tx) =>
+    tx.query("select planta_save_assignment($1::jsonb)", [
+      JSON.stringify({ id, project_id: "p-1042", item_id: "itm-mostrador", rubro: "carpinteria_madera", operator_id: operatorId, date, planned_hours: 8 }),
+    ]),
+  );
+  return id;
+}

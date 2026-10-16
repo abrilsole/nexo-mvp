@@ -224,7 +224,7 @@ export function UsageForm({
           {project.items.length > 0 && (
             <div>
               <label htmlFor="u-item" className="mb-1 block text-sm font-medium text-slate-700">
-                ¿Para qué mueble? <span className="font-normal text-slate-500">(opcional)</span>
+                ¿Para qué producto? <span className="font-normal text-slate-500">(opcional)</span>
               </label>
               <Select id="u-item" value={itemId} onChange={(e) => setItemId(e.target.value)} className={field}>
                 <option value="">General del proyecto</option>

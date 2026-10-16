@@ -13,7 +13,8 @@ const COST_KEYS = /amount|unit_cost|unitCost|hourly|sales_price|total/i;
 describe("tallerCalls", () => {
   it("horas: una llamada a taller_log_hours, sin importes", () => {
     const p = seed.projects.find((x) => x.id === MAIN_DEMO_PROJECT_ID)!;
-    const next = ops.logHours(p, seed.operators, { date: "2026-10-06", hours: 2, workType: "Armado" }, DEFAULT_SETTINGS, ctx);
+    const a = { id: "asg-x", projectId: p.id, itemId: "itm-mostrador", rubro: "carpinteria_madera" as const, operatorId: "op-juan", date: "2026-10-06", plannedHours: 4, createdBy: "x", createdAt: "" };
+    const next = ops.logHours(p, seed.operators, [a], { assignmentId: "asg-x", hours: 2 }, DEFAULT_SETTINGS, ctx);
     const calls = tallerCalls(base, { ...base, projects: seed.projects.map((x) => (x.id === p.id ? next : x)) }, "org");
     expect(calls).toHaveLength(1);
     expect(calls[0].fn).toBe("taller_log_hours");

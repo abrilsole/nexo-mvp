@@ -1,4 +1,5 @@
-import type { AlertLevel, EconomicHealth, ProjectStatus } from "@/types";
+import type { AlertLevel, EconomicHealth, ProductionStatus, ProjectStatus } from "@/types";
+import { PRODUCTION_STATUS_LABELS, SCHEDULE_LABELS, type ScheduleSignal, type ScheduleView } from "@/lib/production";
 import { Badge } from "@/components/ui/badge";
 import { ALERT_LEVEL_LABELS, ALERT_TONE, HEALTH_LABELS, HEALTH_TONE, STATUS_LABELS, type Tone } from "@/lib/constants";
 
@@ -28,4 +29,22 @@ export function HealthBadge({ health }: { health: EconomicHealth }) {
 
 export function AlertLevelBadge({ level }: { level: AlertLevel }) {
   return <Badge tone={ALERT_TONE[level]} className="uppercase tracking-wide">{ALERT_LEVEL_LABELS[level]}</Badge>;
+}
+
+const PRODUCTION_TONE: Record<ProductionStatus, Tone> = { pending: "gray", in_production: "blue", done: "green" };
+
+/** Estado de un producto o, derivado de sus productos, de la producción del proyecto. */
+export function ProductionBadge({ status }: { status: ProductionStatus }) {
+  return <Badge tone={PRODUCTION_TONE[status]}>{PRODUCTION_STATUS_LABELS[status]}</Badge>;
+}
+
+const SCHEDULE_TONE: Record<ScheduleSignal, Tone> = { on_time: "green", at_risk: "yellow", late: "red" };
+
+/** Semáforo de entrega (fecha y avance). `title` explica de dónde sale. */
+export function ScheduleBadge({ view }: { view: ScheduleView }) {
+  return (
+    <Badge tone={SCHEDULE_TONE[view.signal]} title={view.reason}>
+      {SCHEDULE_LABELS[view.signal]}
+    </Badge>
+  );
 }

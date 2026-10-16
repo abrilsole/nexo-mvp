@@ -1,13 +1,11 @@
 "use client";
 import { useMemo, useState } from "react";
-import type { Project, RubroId, StageKey } from "@/types";
-import { STATUS_LABELS } from "@/lib/constants";
-import { EXECUTION_STATUSES, HOURS_MAX_PER_DAY, checkHours } from "@/lib/project-rules";
+import type { Project, RubroId } from "@/types";
+import { HOURS_MAX_PER_DAY, checkHours } from "@/lib/project-rules";
 import { parseDecimal } from "@/lib/schemas";
 import { formatCurrency, formatNumber, todayISO } from "@/lib/formatting";
 import { useAppStore } from "@/store/use-app-store";
 import { useIdentity } from "@/store/selectors";
-import { rubroOptions } from "@/lib/my-day";
 import { rubroLabel } from "@/lib/rubros";
 import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
@@ -15,16 +13,15 @@ import { QuantityInput } from "@/components/workshop/quantity-input";
 import { cn } from "@/lib/utils";
 
 /**
- * Carga de horas desde Administrativo (el Operario carga en "Mi día"). Las horas van por RUBRO del proyecto
- * (Lote 5B). El costo/hora sale de la ficha del operario, vigente ese día: no se tipea.
+ * Carga manual de horas desde Administrativo (el Operario carga en "Mi día"). Toda hora es de un producto + rubro
+ * (Lote 6): al guardar se crea la asignación de ese día y las horas quedan contra ella. El costo/hora sale de la
+ * ficha del operario, vigente ese día: no se tipea.
  */
 export function HoursForm({ project, onDone }: { project: Project; onDone: (summary: string) => void }) {
   const identity = useIdentity();
   const hoursPerDay = useAppStore((s) => s.costSettings.hoursPerDay);
-  const rubros = rubroOptions(project);
   const operators = useAppStore((s) => s.operators);
-  const logHours = useAppStore((s) => s.logHours);
-  const assignOperators = useAppStore((s) => s.assignOperators);
+  const logHoursManual = useAppStore((s) => s.logHoursManual);
 
   const choices = useMemo(
     () =>
@@ -36,9 +33,10 @@ export function HoursForm({ project, onDone }: { project: Project; onDone: (summ
   const [pickedOperator, setPickedOperator] = useState(choices.find((o) => project.assignedOperatorIds.includes(o.id))?.id ?? "");
   const [date, setDate] = useState(todayISO());
   const [hours, setHours] = useState("");
+  const [itemId, setItemId] = useState(project.items[0]?.id ?? "");
+  const item = project.items.find((i) => i.id === itemId);
   const [rubro, setRubro] = useState<RubroId | "">("");
-  const [stage, setStage] = useState<StageKey>(EXECUTION_STATUSES.includes(project.status) ? (project.status as StageKey) : "production");
-  const [itemId, setItemId] = useState("");
+  const chosenRubro = item?.rubros.some((r) => r.rubro === rubro) ? rubro : (item?.rubros[0]?.rubro ?? "");
   const [comment, setComment] = useState("");
   const [confirmHigh, setConfirmHigh] = useState(false);
   const [error, setError] = useState("");
@@ -50,28 +48,21 @@ export function HoursForm({ project, onDone }: { project: Project; onDone: (summ
 
   const submit = () => {
     if (!operator) return setError(isOperator ? "Tu usuario no está vinculado a un operario." : "Elegí el operario.");
-    if (!rubro) return setError("Elegí el rubro.");
+    if (!item || !chosenRubro) return setError("Elegí el producto y el rubro.");
     if (!Number.isFinite(hoursN) || hoursN <= 0) return setError("Indicá las horas trabajadas.");
     if (check?.level === "block") return setError(check.message ?? "Horas inválidas.");
     if (check?.level === "warn" && !confirmHigh) return setError("Confirmá que las horas son correctas.");
-    if (!isOperator && !project.assignedOperatorIds.includes(operator.id)) {
-      // Gestión carga horas de alguien que todavía no estaba asignado: se lo asigna al proyecto.
-      const r = assignOperators(project.id, [...project.assignedOperatorIds, operator.id]);
-      if (!r.ok) return setError(r.error);
-    }
-    const res = logHours(project.id, {
-      operatorId: isOperator ? undefined : operator.id,
+    const res = logHoursManual(project.id, {
+      operatorId: operator.id,
+      itemId: item.id,
+      rubro: chosenRubro,
       date,
       hours: hoursN,
-      workType: rubroLabel(rubro),
-      rubro,
-      stage,
-      itemId: itemId || undefined,
       comment: comment.trim() || undefined,
       confirmHighHours: confirmHigh,
     });
     if (!res.ok) return setError(res.error);
-    onDone(`${formatNumber(hoursN, 1)} h de ${rubroLabel(rubro)}${isOperator ? "" : ` · ${operator.name}`}`);
+    onDone(`${formatNumber(hoursN, 1)} h de ${item.name} · ${rubroLabel(chosenRubro)} · ${operator.name}`);
   };
 
   const label = "mb-1.5 block text-sm font-medium text-slate-800";
@@ -105,46 +96,37 @@ export function HoursForm({ project, onDone }: { project: Project; onDone: (summ
         </div>
       )}
 
-      <div>
-        <label htmlFor="h-rubro" className={label}>Rubro</label>
-        <Select id="h-rubro" value={rubro} onChange={(e) => setRubro(e.target.value as RubroId)}>
-          <option value="">Elegí el rubro…</option>
-          {rubros.map((r) => (
-            <option key={r} value={r}>{rubroLabel(r)}</option>
-          ))}
-        </Select>
-      </div>
+      {project.items.length === 0 ? (
+        <p role="alert" className="rounded-md bg-amber-50 p-3 text-sm text-amber-900">
+          Este proyecto todavía no tiene productos. Cargalos en la pestaña “Productos y archivos” (con sus rubros y horas estimadas) para poder cargar horas.
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="h-item" className={label}>Producto</label>
+            <Select id="h-item" value={itemId} onChange={(e) => setItemId(e.target.value)}>
+              {project.items.map((i) => (
+                <option key={i.id} value={i.id}>{i.name} × {i.quantity}</option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <label htmlFor="h-rubro" className={label}>Rubro</label>
+            <Select id="h-rubro" value={chosenRubro} onChange={(e) => setRubro(e.target.value as RubroId)}>
+              {(item?.rubros ?? []).map((r) => (
+                <option key={r.rubro} value={r.rubro}>{rubroLabel(r.rubro)}</option>
+              ))}
+            </Select>
+          </div>
+        </div>
+      )}
 
       <QuantityInput id="h-hours" label="Horas" value={hours} onChange={setHours} unit="h" step={0.5} />
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label htmlFor="h-date" className={label}>Fecha</label>
-          <Input id="h-date" type="date" max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} />
-        </div>
-        <div>
-          <label htmlFor="h-stage" className={label}>Etapa</label>
-          <Select id="h-stage" value={stage} onChange={(e) => setStage(e.target.value as StageKey)}>
-            {EXECUTION_STATUSES.map((s) => (
-              <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-            ))}
-          </Select>
-        </div>
+      <div>
+        <label htmlFor="h-date" className={label}>Fecha</label>
+        <Input id="h-date" type="date" max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} />
       </div>
-
-      {project.items.length > 0 && (
-        <div>
-          <label htmlFor="h-item" className={label}>
-            ¿Para qué mueble? <span className="font-normal text-slate-500">(opcional)</span>
-          </label>
-          <Select id="h-item" value={itemId} onChange={(e) => setItemId(e.target.value)}>
-            <option value="">General del proyecto</option>
-            {project.items.map((i) => (
-              <option key={i.id} value={i.id}>{i.name}</option>
-            ))}
-          </Select>
-        </div>
-      )}
 
       <div>
         <label htmlFor="h-comment" className={label}>

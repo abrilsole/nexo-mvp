@@ -42,7 +42,7 @@ export function AttachmentList({ attachments, projectId, canRemove }: { attachme
   );
 }
 
-/** Botón para adjuntar fotos/documentos al proyecto, a un mueble o a una etapa. */
+/** Botón para adjuntar fotos/documentos al proyecto, a un producto o a una etapa. */
 export function AttachButton({
   projectId,
   itemId,

@@ -1,13 +1,13 @@
 // ─────────────────────────────────────────────────────────────
 // Horas estimadas vs reales (Lote 5B) — funciones puras para la sección "Horas" del Administrativo.
-// Por operario: horas previstas en las asignaciones (hasta hoy) vs las cargadas esos días.
-// Por rubro y por proyecto: horas estimadas en el presupuesto vs las cargadas.
+// Por operario: horas previstas en sus asignaciones (hasta hoy) vs las que cargó.
+// Por rubro y por proyecto: horas estimadas en los productos (producto + rubro) vs las cargadas.
 // Los importes (costo de las horas) solo los muestra el Administrativo: los demás roles nunca reciben
 // `amount` ni la tarifa (la base no se los manda).
 // ─────────────────────────────────────────────────────────────
 import type { Operator, Project, RubroId, WorkAssignment } from "@/types";
 import { rubroLabel } from "./rubros";
-import { dayDeviations, exceeds, laborNeeds, overPct, rubroHours, type Threshold } from "./plant";
+import { exceeds, overPct, productRubroHours, type Threshold } from "./plant";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -37,7 +37,7 @@ const row = (key: string, label: string, estimated: number, actual: number, t: T
   estimatedCost: estimatedCost === null ? null : round2(estimatedCost),
 });
 
-const laborCostOf = (p: Project, rubro?: RubroId | null) =>
+const laborCostOf = (p: Project, rubro?: RubroId) =>
   p.budgetLines.filter((l) => l.category === "labor" && l.quantity !== null && (rubro === undefined || l.rubro === rubro)).reduce((s, l) => s + l.total, 0);
 
 export interface HoursReport {
@@ -47,42 +47,37 @@ export interface HoursReport {
 }
 
 export function hoursReport(input: { projects: Project[]; assignments: WorkAssignment[]; operators: Operator[]; today: string; threshold: Threshold }): HoursReport {
-  const { projects, operators, threshold: t } = input;
-  const past = input.assignments.filter((a) => a.date <= input.today);
-  const devs = dayDeviations(projects, past, t);
+  const { projects, operators, threshold: t, today } = input;
   const entryCost = new Map(projects.flatMap((p) => p.actualEntries).map((e) => [e.id, e.amount]));
+  const costOf = (records: { entryId: string }[]) => records.reduce((s, r) => s + (entryCost.get(r.entryId) ?? 0), 0);
+  const live = projects.filter((p) => p.status !== "quotation");
+  const perProject = live.map((p) => ({ p, rows: productRubroHours(p, input.assignments, t, today) }));
 
   const byOperator = operators
     .map((o) => {
-      const planned = past.filter((a) => a.operatorId === o.id).reduce((s, a) => s + a.plannedHours, 0);
-      const mine = devs.filter((d) => d.operatorId === o.id);
-      const actual = mine.reduce((s, d) => s + d.actual, 0);
-      const cost = mine.flatMap((d) => d.records).reduce((s, r) => s + (entryCost.get(r.entryId) ?? 0), 0);
+      const work = perProject.flatMap(({ rows }) => rows.flatMap((r) => r.operators.filter((w) => w.operatorId === o.id)));
+      const planned = work.reduce((s, w) => s + w.planned, 0);
+      const actual = work.reduce((s, w) => s + w.actual, 0);
+      const cost = costOf(perProject.flatMap(({ rows }) => rows.flatMap((r) => r.records.filter((x) => x.operatorId === o.id))));
       return row(o.id, o.name, planned, actual, t, cost, null);
     })
     .filter((r) => r.estimated > 0 || r.actual > 0);
 
-  const live = projects.filter((p) => p.status !== "quotation");
-  const rubroTotals = new Map<string, { label: string; estimated: number; actual: number; cost: number; estCost: number }>();
-  const byProject = live
-    .map((p) => {
-      const rows = rubroHours(p, t);
+  const rubroTotals = new Map<RubroId, { estimated: number; actual: number; cost: number }>();
+  const byProject = perProject
+    .map(({ p, rows }) => {
       for (const r of rows) {
-        const key = r.rubro ?? "sin-rubro";
-        const cur = rubroTotals.get(key) ?? { label: rubroLabel(r.rubro ?? undefined), estimated: 0, actual: 0, cost: 0, estCost: 0 };
-        cur.estimated += r.estimated;
-        cur.actual += r.actual;
-        cur.cost += r.records.reduce((s, x) => s + (entryCost.get(x.entryId) ?? 0), 0);
-        cur.estCost += laborCostOf(p, r.rubro);
-        rubroTotals.set(key, cur);
+        const cur = rubroTotals.get(r.rubro) ?? { estimated: 0, actual: 0, cost: 0 };
+        rubroTotals.set(r.rubro, { estimated: cur.estimated + r.estimated, actual: cur.actual + r.actual, cost: cur.cost + costOf(r.records) });
       }
-      const estimated = laborNeeds(p).reduce((s, n) => s + n.hours, 0);
+      const estimated = rows.reduce((s, r) => s + r.estimated, 0);
       const actual = rows.reduce((s, r) => s + r.actual, 0);
-      const cost = rows.flatMap((r) => r.records).reduce((s, x) => s + (entryCost.get(x.entryId) ?? 0), 0);
-      return row(p.id, `${p.code} · ${p.name}`, estimated, actual, t, cost, laborCostOf(p));
+      return row(p.id, `${p.code} · ${p.name}`, estimated, actual, t, costOf(rows.flatMap((r) => r.records)), laborCostOf(p));
     })
     .filter((r) => r.estimated > 0 || r.actual > 0);
 
-  const byRubro = [...rubroTotals.entries()].map(([key, v]) => row(key, v.label, v.estimated, v.actual, t, v.cost, v.estCost));
+  const byRubro = [...rubroTotals.entries()].map(([rubro, v]) =>
+    row(rubro, rubroLabel(rubro), v.estimated, v.actual, t, v.cost, live.reduce((s, p) => s + laborCostOf(p, rubro), 0)),
+  );
   return { byOperator, byRubro, byProject };
 }

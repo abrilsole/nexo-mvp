@@ -15,6 +15,11 @@ let juan = ""; // Operario
 let otro = ""; // Administrativo de otra empresa
 
 const today = new Date().toISOString().slice(0, 10);
+/** Ids de líneas de materiales de P-1053 en el seed (dependen del orden del seed, no de la fecha). */
+const lineOf = (materialId: string) => buildSeed(new Date()).projects.find((p) => p.id === "p-1053")!.budgetLines.find((l) => l.materialId === materialId)!.id;
+const ALU = lineOf("perfil-alu");
+const COR = lineOf("corredera");
+const GRAF = lineOf("mel-grafito-18");
 const rows = async (userId: string, sql: string, params: unknown[] = []) =>
   asUser(db, userId, async (tx) => (await tx.query<Record<string, unknown>>(sql, params)).rows);
 const save = (userId: string, p: Record<string, unknown>) => asUser(db, userId, (tx) => tx.query("select compras_save($1::jsonb)", [JSON.stringify(p)]));
@@ -61,26 +66,26 @@ describe("Compras registra compras reales", () => {
       lots: [{ id: "lot_c1", kind: "purchase", material_id: "perfil-alu", material_name: "Perfil aluminio", unit: "m", unit_cost: 15500, supplier: "Aluminios BA", purchase_entry_id: "pur_c1", origin_project_id: "p-1053", origin_project_name: "P-1053" }],
       movements: [{ id: "mov_c1", lot_id: "lot_c1", kind: "purchase_in", quantity: 60, from_place: { kind: "supplier" }, to_place: { kind: "project", projectId: "p-1053" }, date: today, project_id: "p-1053" }],
       activity: [{ id: "act_c1", project_id: "p-1053", kind: "purchase", message: "Compra de 60 m de Perfil aluminio." }],
-      line_statuses: [{ project_id: "p-1053", line_id: "bl-0407", status: "purchased" }],
+      line_statuses: [{ project_id: "p-1053", line_id: ALU, status: "purchased" }],
     });
     expect(await rows(laura, "select created_by from stock_lots where id = 'lot_c1'")).toEqual([{ created_by: "Martín Ruiz" }]);
     expect(await rows(laura, "select kind from stock_movements where id = 'mov_c1'")).toEqual([{ kind: "purchase_in" }]);
-    expect(await rows(laura, "select status, updated_by from purchase_line_status where line_id = 'bl-0407'")).toEqual([{ status: "purchased", updated_by: "Martín Ruiz" }]);
+    expect(await rows(laura, `select status, updated_by from purchase_line_status where line_id = '${ALU}'`)).toEqual([{ status: "purchased", updated_by: "Martín Ruiz" }]);
   });
   it("el estado se puede cambiar (cotizando → recibido) y Administrativo también lo usa", async () => {
-    await save(martin, { line_statuses: [{ project_id: "p-1053", line_id: "bl-0408", status: "quoting" }] });
-    await save(laura, { line_statuses: [{ project_id: "p-1053", line_id: "bl-0407", status: "received" }] });
+    await save(martin, { line_statuses: [{ project_id: "p-1053", line_id: COR, status: "quoting" }] });
+    await save(laura, { line_statuses: [{ project_id: "p-1053", line_id: ALU, status: "received" }] });
     expect(await rows(martin, "select line_id, status from purchase_line_status order by line_id")).toEqual([
-      { line_id: "bl-0407", status: "received" },
-      { line_id: "bl-0408", status: "quoting" },
+      { line_id: ALU, status: "received" },
+      { line_id: COR, status: "quoting" },
     ]);
   });
   it("valida: precio y cantidad > 0, proyecto en ejecución, línea de materiales, sin consumo", async () => {
     expect(await saveError(martin, { purchases: [{ ...purchase, id: "pur_x", unit_cost: 0 }] })).toMatch(/mayores a cero/);
     expect(await saveError(martin, { purchases: [{ ...purchase, id: "pur_x", project_id: "p-1056" }] })).toMatch(/Cotización o cerrado/);
     expect(await saveError(martin, { purchases: [{ ...purchase, id: "pur_x", project_id: "p-0987" }] })).toMatch(/Cotización o cerrado/);
-    expect(await saveError(martin, { line_statuses: [{ project_id: "p-1053", line_id: "bl-0410x", status: "quoting" }] })).toMatch(/Línea de materiales/);
-    expect(await saveError(martin, { line_statuses: [{ project_id: "p-1053", line_id: "bl-0407", status: "perdido" }] })).toMatch(/Estado inválido/);
+    expect(await saveError(martin, { line_statuses: [{ project_id: "p-1053", line_id: "bl-no-existe", status: "quoting" }] })).toMatch(/Línea de materiales/);
+    expect(await saveError(martin, { line_statuses: [{ project_id: "p-1053", line_id: ALU, status: "perdido" }] })).toMatch(/Estado inválido/);
     expect(await saveError(martin, { movements: [{ id: "mov_x", lot_id: "lot_c1", kind: "consume", quantity: 1, from_place: { kind: "project", projectId: "p-1053" }, to_place: { kind: "consumed" }, date: today }] })).toMatch(/taller/);
   });
   it("un sobrante hereda el costo de su lote (no se puede inventar un costo)", async () => {
@@ -105,16 +110,16 @@ describe("pedidos del taller", () => {
 describe("los demás roles no escriben con compras_save", () => {
   it("Jefe de planta y Operario: rechazado", async () => {
     for (const u of [carla, juan]) {
-      expect(await saveError(u, { line_statuses: [{ project_id: "p-1053", line_id: "bl-0405", status: "quoting" }] })).toMatch(/Solo Compras o un usuario Administrativo/);
+      expect(await saveError(u, { line_statuses: [{ project_id: "p-1053", line_id: GRAF, status: "quoting" }] })).toMatch(/Solo Compras o un usuario Administrativo/);
     }
   });
   it("otra empresa solo escribe en la suya: los proyectos de esta no existen para ella", async () => {
-    expect(await saveError(otro, { line_statuses: [{ project_id: "p-1053", line_id: "bl-0405", status: "quoting" }] })).toMatch(/Línea de materiales no encontrada/);
+    expect(await saveError(otro, { line_statuses: [{ project_id: "p-1053", line_id: GRAF, status: "quoting" }] })).toMatch(/Línea de materiales no encontrada/);
     expect(await saveError(otro, { purchases: [{ ...purchase, id: "pur_y" }] })).toMatch(/Proyecto no encontrado/);
   });
   it("Compras dado de baja: rechazado", async () => {
     await db.query("update organization_members set deactivated_at = now() where user_id = $1", [martin]);
-    expect(await saveError(martin, { line_statuses: [{ project_id: "p-1053", line_id: "bl-0405", status: "quoting" }] })).toMatch(/Solo Compras/);
+    expect(await saveError(martin, { line_statuses: [{ project_id: "p-1053", line_id: GRAF, status: "quoting" }] })).toMatch(/Solo Compras/);
     await db.query("update organization_members set deactivated_at = null where user_id = $1", [martin]);
   });
   it("Jefe de planta y Operario no leen los estados de línea; Compras no lee las tablas con importes", async () => {
