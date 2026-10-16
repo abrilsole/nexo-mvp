@@ -73,6 +73,7 @@ const alertsSchema = z
     deadlineNoProductionPct: pct,
     hoursDeviationPct: z.number({ error: "Ingresá un número" }).min(1, "Mínimo 1").max(500, "Máximo 500"),
     hoursDeviationHours: z.number({ error: "Ingresá un número" }).min(0.5, "Mínimo 0,5").max(24, "Máximo 24"),
+    purchaseLeadDays: z.number({ error: "Ingresá un número" }).int("Días enteros").min(1, "Mínimo 1").max(60, "Máximo 60"),
   })
   .refine((v) => v.categoryCriticalPct > v.categoryWarningPct, { path: ["categoryCriticalPct"], message: "Debe ser mayor que el de atención" })
   .refine((v) => v.marginCriticalPp > v.marginWarningPp, { path: ["marginCriticalPp"], message: "Debe ser mayor que el de atención" });
@@ -150,6 +151,17 @@ const ALERT_GROUPS: AlertGroup[] = [
         key: "hoursDeviationHours",
         label: "…o en (horas)",
         help: (v) => `Si se previeron 4 h, avisa desde ${PTS(4 + v.hoursDeviationHours)} h cargadas (o antes, si se cumple el %).`,
+      },
+    ],
+  },
+  {
+    title: "Compras (supuesto a ajustar con el cliente)",
+    help: "El material de un proyecto se necesita para el día de inicio. Avisa a Compras (y al Administrativo) lo que todavía no se compró y se necesita en pocos días. Los 7 días iniciales son un supuesto.",
+    fields: [
+      {
+        key: "purchaseLeadDays",
+        label: "Avisar material sin comprar con (días de anticipación)",
+        help: (v) => `Un proyecto que arranca en ${v.purchaseLeadDays} días o menos y tiene materiales pendientes o cotizando genera un aviso.`,
       },
     ],
   },

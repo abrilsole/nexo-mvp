@@ -156,6 +156,18 @@ export interface HourRate {
   category: HourCategory;
 }
 
+/** Estado de compra de una línea de materiales (Lote 5C): pendiente → cotizando → comprado → recibido. */
+export type LineStatus = "pending" | "quoting" | "purchased" | "received";
+
+export interface PurchaseLineStatus {
+  projectId: string;
+  /** Línea de materiales del costo presupuestado. */
+  lineId: string;
+  status: LineStatus;
+  updatedBy: string;
+  updatedAt: string;
+}
+
 export interface PurchaseEntry {
   id: string;
   projectId: string;
@@ -485,9 +497,22 @@ export interface AlertSettings {
   hoursDeviationPct: number;
   /** …o en estas horas, lo que ocurra primero. */
   hoursDeviationHours: number;
+  /** Compras (Lote 5C, supuesto a ajustar): avisa el material sin comprar que se necesita en estos días o menos. */
+  purchaseLeadDays: number;
 }
 
-export type AlertKind = "category" | "margin" | "stale" | "due" | "reconciliation" | "staffing" | "hours" | "overload" | "unassigned";
+export type AlertKind =
+  | "category"
+  | "margin"
+  | "stale"
+  | "due"
+  | "reconciliation"
+  | "staffing"
+  | "hours"
+  | "overload"
+  | "unassigned"
+  | "purchase_due"
+  | "purchase_cost";
 
 export interface Alert {
   /** Determinístico: permite marcarla como resuelta. Incluye el nivel para que un agravamiento reaparezca. */

@@ -6,7 +6,6 @@ import {
   Boxes,
   Calculator,
   CalendarDays,
-  ClipboardList,
   Clock,
   FolderKanban,
   HardHat,
@@ -24,7 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 import { APP_NAME, APP_SUBTITLE } from "@/lib/constants";
 import { useAppStore } from "@/store/use-app-store";
-import { useAlerts } from "@/store/selectors";
+import { useAlertCount } from "@/store/selectors";
 import { Button } from "@/components/ui/button";
 import { ModeSwitch } from "./mode-switch";
 import { WorkshopHome } from "@/components/workshop/workshop-home";
@@ -43,7 +42,6 @@ const ICONS: Record<NavIcon, LucideIcon> = {
   stock: Boxes,
   operators: HardHat,
   settings: Settings,
-  materials: ClipboardList,
   hours: Clock,
   assign: UsersRound,
   day: CalendarDays,
@@ -51,6 +49,11 @@ const ICONS: Record<NavIcon, LucideIcon> = {
 
 function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/** El ítem activo es el más específico ("/compras/stock" y no también "/compras"). */
+function activeHref(pathname: string, hrefs: string[]): string | undefined {
+  return hrefs.filter((h) => isActive(pathname, h)).sort((a, b) => b.length - a.length)[0];
 }
 
 function useBreadcrumb(): Crumb[] {
@@ -61,8 +64,8 @@ function useBreadcrumb(): Crumb[] {
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
-  const { count } = useAlerts();
   const { roleKey, actor } = useIdentity();
+  const count = useAlertCount(roleKey);
   const userEmail = useAppStore((s) => s.userEmail);
   const organizationName = useAppStore((s) => s.organizationName);
 
@@ -73,9 +76,9 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <div className="text-xs text-slate-500">{APP_SUBTITLE}</div>
       </Link>
       <nav aria-label="Principal" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden px-3">
-        {navFor(roleKey).map((item) => {
+        {navFor(roleKey).map((item, _i, items) => {
           const Icon = ICONS[item.icon];
-          const active = isActive(pathname, item.href);
+          const active = activeHref(pathname, items.map((x) => x.href)) === item.href;
           return (
             <Link
               key={item.href}
@@ -89,7 +92,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             >
               <Icon className="size-4 shrink-0" aria-hidden />
               <span className="min-w-0 flex-1 break-words">{item.label}</span>
-              {item.href === "/alerts" && count > 0 && (
+              {item.icon === "alerts" && count > 0 && (
                 <span className="shrink-0 rounded-full bg-red-100 px-1.5 text-xs font-semibold text-red-700 tabular">{count}</span>
               )}
             </Link>

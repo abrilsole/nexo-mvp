@@ -5,10 +5,11 @@
 // alcanza con comparar referencias).
 // ─────────────────────────────────────────────────────────────
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { AlertSettings, AppRole, CostSettings, HourRate, MaterialRequest, Operator, PriceRecord, Project, ValueCorrection, WorkAssignment } from "@/types";
+import type { AlertSettings, AppRole, CostSettings, HourRate, MaterialRequest, Operator, PriceRecord, Project, PurchaseLineStatus, ValueCorrection, WorkAssignment } from "@/types";
 import { DEFAULT_FINANCIAL_PCT, DEFAULT_HOUR_RATES, DEFAULT_HOURS_PER_DAY, DEFAULT_OVERTIME_MULTIPLIER, DEFAULT_SETTINGS } from "@/lib/constants";
 import type { StockState } from "@/lib/stock";
 import type { TallerCall } from "./taller";
+import type { ComprasPayload } from "./compras";
 import type { CorrectionInput, CorrectionReceipt } from "@/lib/corrections";
 import { deriveLedgerFromLegacy } from "@/lib/stock-legacy";
 import { todayISO } from "@/lib/formatting";
@@ -35,6 +36,8 @@ import {
   correctionFromRow,
   assignmentFromRow,
   assignmentToParams,
+  lineStatusFromRow,
+  lineStatusToParams,
   type ChildKey,
 } from "./mappers";
 
@@ -42,6 +45,8 @@ export interface WorkspaceData {
   projects: Project[];
   /** Asignaciones del Jefe de planta (Lote 5B). Las lee Administrativo y Jefe de planta; el Operario, las suyas. */
   assignments: WorkAssignment[];
+  /** Estado de compra de las líneas de materiales (Lote 5C). Lo leen Administrativo y Compras. */
+  lineStatuses: PurchaseLineStatus[];
   operators: Operator[];
   stock: StockState;
   requests: MaterialRequest[];
@@ -132,6 +137,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     priceHistory,
     corrections,
     assignments,
+    lineStatuses,
   ] = await Promise.all([
     check(await db.from("projects").select("*").eq("organization_id", org).order("created_at", { ascending: false })) as Record<
       string,
@@ -156,6 +162,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     loadOptional(db, "price_history", org, priceRecordFromRow),
     loadOptional(db, "value_corrections", org, correctionFromRow),
     loadAssignments(db, org),
+    loadOptional(db, "purchase_line_status", org, lineStatusFromRow),
   ]);
 
   const domainProjects = projectsFromRows({ projects, budgetLines, purchaseEntries, materialUsages, actualEntries, activity, items, stageLogs, attachments });
@@ -183,6 +190,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     priceHistory,
     corrections,
     assignments,
+    lineStatuses,
     projects: domainProjects,
     operators: operatorsAt(operators.map(operatorFromRow), priceHistory, todayISO()),
     stock,
@@ -299,6 +307,7 @@ async function loadTallerWorkspace(db: SupabaseClient, user: { id: string; email
     priceHistory: [],
     corrections: [],
     assignments: (json.assignments ?? []).map(assignmentFromRow),
+    lineStatuses: [],
     demoSeeded: true,
     isDemo: false,
     stockMigrated: false,
@@ -339,6 +348,7 @@ interface StaffWorkspaceJson {
   material_requests?: Row[];
   price_history?: Row[];
   assignments?: Row[];
+  line_statuses?: Row[];
   hours_per_day?: number | string;
   alert_settings?: Partial<AlertSettings> | null;
 }
@@ -367,6 +377,7 @@ async function loadStaffWorkspace(db: SupabaseClient, user: { id: string; email?
     priceHistory: (json.price_history ?? []).map(priceRecordFromRow),
     corrections: [],
     assignments: (json.assignments ?? []).map(assignmentFromRow),
+    lineStatuses: (json.line_statuses ?? []).map(lineStatusFromRow),
     demoSeeded: true,
     isDemo: false,
     stockMigrated: false,
@@ -497,6 +508,11 @@ export async function removeAssignment(db: SupabaseClient, id: string) {
   check(await db.rpc("planta_remove_assignment", { p_id: id }));
 }
 
+/** Escritura de Compras (Administrativo también la usa para los estados de línea): la base valida todo. */
+export async function comprasSave(db: SupabaseClient, payload: ComprasPayload) {
+  check(await db.rpc("compras_save", { p: payload }));
+}
+
 /** El historial de precios solo crece: se insertan los registros nuevos. */
 export async function addPriceRecords(db: SupabaseClient, org: string, records: PriceRecord[]) {
   if (records.length) check(await db.from("price_history").insert(records.map((r) => priceRecordToRow(org, r))));
@@ -564,6 +580,8 @@ export async function replaceWorkspace(db: SupabaseClient, org: string, data: Wo
   check(await db.rpc("reset_workspace", { p_data: workspacePayload(org, data) }));
   // Las asignaciones de la demo se cargan con la misma función que usa el Jefe de planta.
   for (const a of data?.assignments ?? []) await saveAssignment(db, a);
+  // Los estados de compra de la demo, con la misma función que usa Compras.
+  if (data?.lineStatuses.length) await comprasSave(db, { line_statuses: data.lineStatuses.map(lineStatusToParams) });
   // Con la demo cargada la empresa queda como demo; al vaciar, deja de serlo.
   check(await db.from("organizations").update({ is_demo: data !== null }).eq("id", org));
 }

@@ -19,8 +19,17 @@ export const SECTION_LABELS: Record<string, string> = {
   operators: "Operarios",
   settings: "Configuración",
   materials: "Materiales",
-  compras: "Materiales por proyecto",
+  compras: "Compras",
+  "compras/proyectos": "Proyectos",
+  "compras/alertas": "Alertas",
+  "compras/cotizador": "Cotizador",
+  "compras/historial": "Historial",
+  "compras/stock": "Stock",
   planta: "Planta",
+  "planta/proyectos": "Proyectos",
+  "planta/operarios": "Operarios",
+  "planta/asignaciones": "Asignaciones",
+  "planta/alertas": "Alertas",
   horas: "Horas",
   taller: "Mi día",
 };
@@ -33,6 +42,9 @@ export function breadcrumbTrail(pathname: string, projectCode: (id: string) => s
   const parts = pathname.split("/").filter(Boolean);
   if (parts.length === 0) return [];
   const crumbs: Crumb[] = [{ label: SECTION_LABELS[parts[0]] ?? parts[0], href: `/${parts[0]}` }];
+  // Secciones de Compras y Jefe de planta: /compras/stock → Compras / Stock.
+  const sub = parts[1] ? SECTION_LABELS[`${parts[0]}/${parts[1]}`] : undefined;
+  if (sub) crumbs.push({ label: sub, href: `/${parts[0]}/${parts[1]}` });
   if (parts[0] === "projects" && parts[1]) {
     crumbs.push({
       label: parts[1] === "new" ? "Nuevo proyecto" : (projectCode(parts[1]) ?? "Proyecto"),

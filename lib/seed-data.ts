@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────
 import type {
   WorkAssignment,
+  PurchaseLineStatus,
   ActivityEvent,
   ActualEntry,
   ActualEntryType,
@@ -354,6 +355,8 @@ export interface SeedState {
   operators: Operator[];
   /** Asignaciones del Jefe de planta para esta semana (Lote 5B). */
   assignments: WorkAssignment[];
+  /** Estados de compra de ejemplo (Lote 5C): una línea cotizando y una ya recibida. */
+  lineStatuses: PurchaseLineStatus[];
   /** Stock inicial: se deriva de las compras, usos y sobrantes de la demo. */
   stock: StockState;
   /** Pool del modelo anterior (sólo para derivar el stock). */
@@ -946,5 +949,19 @@ export function buildSeed(now: Date = new Date()): SeedState {
 
   const operators: Operator[] = OPERATOR_SPECS.map((o) => ({ ...o, active: true, createdAt: b.at(-200, 9) }));
   const assignments = seedAssignments(b, projects);
-  return { projects, operators, assignments, stock: deriveLedgerFromLegacy(projects, b.pool), legacyPool: b.pool };
+  const lineStatuses = seedLineStatuses(projects, b.at(0));
+  return { projects, operators, assignments, lineStatuses, stock: deriveLedgerFromLegacy(projects, b.pool), legacyPool: b.pool };
+}
+
+/** Compras (Lote 5C): P-1053 cotiza el perfil de aluminio y P-1045 ya recibió la melamina. */
+function seedLineStatuses(projects: Project[], now: string): PurchaseLineStatus[] {
+  const specs: Array<[code: string, materialId: string, status: PurchaseLineStatus["status"]]> = [
+    ["P-1053", "perfil-alu", "quoting"],
+    ["P-1045", "mel-blanca-18", "received"],
+  ];
+  return specs.flatMap(([code, materialId, status]) => {
+    const p = projects.find((x) => x.code === code);
+    const line = p?.budgetLines.find((l) => l.category === "materials" && l.materialId === materialId);
+    return p && line ? [{ projectId: p.id, lineId: line.id, status, updatedBy: DEMO_USERS.compras.name, updatedAt: now }] : [];
+  });
 }

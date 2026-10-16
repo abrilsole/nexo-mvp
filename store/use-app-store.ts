@@ -18,6 +18,8 @@ import type {
   Operator,
   PriceRecord,
   Project,
+  PurchaseLineStatus,
+  LineStatus,
   ProjectStatus,
   StockLot,
   ValueCorrection,
@@ -30,7 +32,7 @@ import { buildSeed } from "@/lib/seed-data";
 import * as ops from "@/lib/project-operations";
 import * as people from "@/lib/operators";
 import { createId } from "@/lib/activity";
-import { isManager } from "@/lib/project-rules";
+import { isBuyer, isManager } from "@/lib/project-rules";
 import { EMPTY_STOCK, applyChange, receiveStock, type StockState } from "@/lib/stock";
 import { materialKey } from "@/lib/material-reconciliation";
 import { createClient } from "@/lib/supabase/client";
@@ -38,6 +40,9 @@ import { lotToRow } from "@/lib/supabase/mappers";
 import * as remote from "@/lib/supabase/workspace";
 import { DEFAULT_COST_SETTINGS, type Workspace, type WorkspaceData } from "@/lib/supabase/workspace";
 import { tallerCalls } from "@/lib/supabase/taller";
+import { comprasPayload } from "@/lib/supabase/compras";
+import { lineStatusToParams } from "@/lib/supabase/mappers";
+import { recordPurchaseError, type RecordPurchaseInput } from "@/lib/purchasing";
 import { todayISO } from "@/lib/formatting";
 import { hourRatesAt, laborCostAt, OVERTIME_SUBJECT, priceChange, priceChangeError, valueAt } from "@/lib/price-history";
 import { applyCorrection, correctionError, type CorrectionInput } from "@/lib/corrections";
@@ -51,6 +56,8 @@ interface AppState {
   projects: Project[];
   /** Asignaciones del Jefe de planta (Lote 5B). */
   assignments: WorkAssignment[];
+  /** Estado de compra de las líneas de materiales (Lote 5C). */
+  lineStatuses: PurchaseLineStatus[];
   operators: Operator[];
   stock: StockState;
   requests: MaterialRequest[];
@@ -166,6 +173,10 @@ interface AppState {
   saveAssignment: (input: AssignmentInput & { id?: string }) => Result<string>;
   /** Quita una asignación. */
   removeAssignment: (id: string) => Result;
+  /** Estado de compra de una línea de materiales (Compras o Administrativo). */
+  setLineStatus: (projectId: string, lineId: string, status: LineStatus) => Result;
+  /** Compra real de una o varias líneas del mismo material: precio pagado, proveedor y fecha. Las deja en "Comprado". */
+  recordPurchase: (input: RecordPurchaseInput) => Result;
   /** Corrige un valor congelado (proyecto aprobado o cerrado) con motivo: queda registrado. */
   correctValue: (projectId: string, input: CorrectionInput) => Promise<Result>;
   /** Reemplaza los datos de la empresa por la demo de Madera Sur. */
@@ -184,6 +195,7 @@ export function demoData(): WorkspaceData {
   return {
     projects: seed.projects,
     assignments: seed.assignments,
+    lineStatuses: seed.lineStatuses,
     operators: seed.operators,
     stock: seed.stock,
     requests: [],
@@ -195,6 +207,7 @@ export function demoData(): WorkspaceData {
 const EMPTY_DATA: WorkspaceData = {
   projects: [],
   assignments: [],
+  lineStatuses: [],
   operators: [],
   stock: EMPTY_STOCK,
   requests: [],
@@ -269,10 +282,20 @@ export const useAppStore = create<AppState>()(
         const stock = next.stock ?? prev.stock;
         const operators = next.operators ?? prev.operators;
         const requests = next.requests ?? prev.requests;
-        if (prev.role === "compras" || prev.role === "jefe_planta") {
-          throw new ops.DomainError("Con tu rol todavía no se cargan datos en Blerp.");
+        if (prev.role === "jefe_planta" || (prev.role === "compras" && operators !== prev.operators)) {
+          throw new ops.DomainError("Con tu rol no se cargan estos datos en Blerp.");
         }
         set({ projects, stock, operators, requests });
+        if (prev.role === "compras") {
+          // Compras no escribe tablas: lo nuevo va a compras_save (la base valida y calcula el total).
+          const payload = comprasPayload(
+            { projects: prev.projects, stock: prev.stock, requests: prev.requests },
+            { projects, stock, requests },
+            prev.organizationId ?? "",
+          );
+          if (payload) void persistRemote((db) => remote.comprasSave(db, payload));
+          return;
+        }
         if (prev.role === "operator") {
           // Taller no escribe tablas: cada registro nuevo va a su función del servidor (que calcula los costos).
           const calls = tallerCalls({ projects: prev.projects, stock: prev.stock, requests: prev.requests }, { projects, stock, requests }, prev.organizationId ?? "");
@@ -307,6 +330,21 @@ export const useAppStore = create<AppState>()(
 
       const requireManager = (what: string) => {
         if (!isManager(effectiveIdentity(get()).role)) throw new ops.DomainError(`${what} lo hace un usuario Administrativo.`);
+      };
+
+      const requireBuyer = (what: string) => {
+        if (!isBuyer(effectiveIdentity(get()).role)) throw new ops.DomainError(`${what} lo hace Compras o un usuario Administrativo.`);
+      };
+
+      /** Guarda estados de línea (en memoria y con compras_save, la misma función para Compras y Administrativo). */
+      const setStatuses = (changes: Array<Pick<PurchaseLineStatus, "projectId" | "lineId" | "status">>) => {
+        if (changes.length === 0) return;
+        const meta = { updatedBy: effectiveIdentity(get()).actor, updatedAt: new Date().toISOString() };
+        const same = (a: Pick<PurchaseLineStatus, "projectId" | "lineId">, b: Pick<PurchaseLineStatus, "projectId" | "lineId">) =>
+          a.projectId === b.projectId && a.lineId === b.lineId;
+        const rest = get().lineStatuses.filter((s) => !changes.some((c) => same(s, c)));
+        set({ lineStatuses: [...rest, ...changes.map((c) => ({ ...c, ...meta }))] });
+        void persistRemote((db) => remote.comprasSave(db, { line_statuses: changes.map(lineStatusToParams) }));
       };
 
       /** Aplica una operación pura sobre un proyecto. */
@@ -378,6 +416,7 @@ export const useAppStore = create<AppState>()(
           set({
             projects: ws.projects,
             assignments: ws.assignments,
+            lineStatuses: ws.lineStatuses,
             operators: ws.operators,
             stock: ws.stock,
             requests: ws.requests,
@@ -493,7 +532,7 @@ export const useAppStore = create<AppState>()(
 
         addStockLot: (input) =>
           run(() => {
-            requireManager("Registrar compras de stock");
+            requireBuyer("Registrar compras de stock");
             const c = ctx();
             const received = receiveStock(
               {
@@ -516,13 +555,15 @@ export const useAppStore = create<AppState>()(
 
         updateLotLocation: (lotId, location) =>
           run(() => {
-            requireManager("Editar la ubicación");
+            requireBuyer("Editar la ubicación");
             const stock = get().stock;
             // La ubicación es un dato del lote, no un movimiento: se reemplaza el lote (el ledger no cambia).
             const next = { ...stock, lots: stock.lots.map((l) => (l.id === lotId ? { ...l, location: location.trim() || undefined } : l)) };
             set({ stock: next });
             const lot = next.lots.find((l) => l.id === lotId);
-            if (lot) {
+            if (lot && get().role === "compras") {
+              void persistRemote((db) => remote.comprasSave(db, { lot_locations: [{ id: lot.id, location: lot.location ?? null }] }));
+            } else if (lot) {
               void persistRemote(async (db, org) => {
                 const res = await db.from("stock_lots").upsert(lotToRow(org, lot), { onConflict: "organization_id,id" });
                 if (res.error) throw new Error(res.error.message);
@@ -611,7 +652,7 @@ export const useAppStore = create<AppState>()(
 
         setRequestStatus: (id, status) =>
           run(() => {
-            requireManager("Resolver pedidos de material");
+            requireBuyer("Resolver pedidos de material");
             const now = new Date().toISOString();
             const actor = effectiveIdentity(get()).actor;
             commit({
@@ -704,6 +745,47 @@ export const useAppStore = create<AppState>()(
             if (who !== "admin" && who !== "jefe_planta") throw new ops.DomainError("Las asignaciones las hace el Jefe de planta.");
             set({ assignments: get().assignments.filter((a) => a.id !== id) });
             void persistRemote((db) => remote.removeAssignment(db, id));
+            return undefined;
+          }),
+        setLineStatus: (projectId, lineId, status) =>
+          run(() => {
+            requireBuyer("Cambiar el estado de compra");
+            const line = find(projectId).budgetLines.find((l) => l.id === lineId && l.category === "materials");
+            if (!line) throw new ops.DomainError("Línea de materiales no encontrada.");
+            setStatuses([{ projectId, lineId, status }]);
+            return undefined;
+          }),
+        recordPurchase: (input) =>
+          run(() => {
+            requireBuyer("Registrar compras");
+            const error = recordPurchaseError(input, todayISO());
+            if (error) throw new ops.DomainError(error);
+            const c = ctx();
+            let { projects, stock } = get();
+            const parts = input.parts.filter((p) => p.quantity > 0);
+            for (const part of parts) {
+              const project = projects.find((p) => p.id === part.projectId);
+              if (!project) throw new ops.DomainError("Proyecto no encontrado.");
+              const res = ops.addPurchase(
+                project,
+                stock,
+                {
+                  materialId: input.materialId,
+                  materialName: input.materialName,
+                  quantity: part.quantity,
+                  unit: input.unit,
+                  unitCost: input.unitCost,
+                  supplier: input.supplier.trim(),
+                  date: input.date,
+                  notes: input.notes,
+                },
+                c,
+              );
+              projects = projects.map((p) => (p.id === project.id ? res.project : p));
+              stock = res.stock;
+            }
+            commit({ projects, stock });
+            setStatuses(parts.map((p) => ({ projectId: p.projectId, lineId: p.lineId, status: "purchased" as const })));
             return undefined;
           }),
         correctValue: async (projectId, input) => {

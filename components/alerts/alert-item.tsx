@@ -9,19 +9,24 @@ import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/store/use-app-store";
 import { cn } from "@/lib/utils";
 
-/** `readOnly`: sin "Marcar resuelta" ni link al proyecto (Jefe de planta: no ve la pantalla del proyecto con importes). */
+/**
+ * `readOnly`: sin "Marcar resuelta" ni link a la ficha del proyecto (Jefe de planta y Compras no la ven: tiene importes).
+ * `link`: en ese caso, adónde ir a resolverla (Compras: la lista de materiales del proyecto).
+ */
 export function AlertItem({
   alert,
   resolved = false,
   showProject = true,
   compact = false,
   readOnly = false,
+  link,
 }: {
   alert: Alert;
   resolved?: boolean;
   showProject?: boolean;
   compact?: boolean;
   readOnly?: boolean;
+  link?: { href: string; label: string };
 }) {
   const resolveAlert = useAppStore((s) => s.resolveAlert);
   const reopenAlert = useAppStore((s) => s.reopenAlert);
@@ -79,6 +84,13 @@ export function AlertItem({
               </Button>
             )}
           </div>
+          )}
+          {readOnly && link && (
+            <Button asChild variant="outline" size="sm">
+              <Link href={link.href}>
+                {link.label} <ArrowRight />
+              </Link>
+            </Button>
           )}
         </div>
       </div>

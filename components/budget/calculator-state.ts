@@ -13,6 +13,7 @@ import {
   type CalcAdjustment,
   type QuoteBreakdown,
   type QuoteInput,
+  type QuoteMaterial,
   type RatesByCategory,
   type RubroLabor,
   type WorkSchedule,
@@ -116,18 +117,23 @@ export interface CalculatorContext {
   isDemo: boolean;
 }
 
+/** Una fila de material en edición → material de la cotización (con su id de catálogo si coincide el nombre). */
+export function materialRowToQuote(m: MaterialRow): QuoteMaterial {
+  return {
+    materialId: MATERIAL_CATALOG.find((c) => c.name.toLowerCase() === m.name.trim().toLowerCase())?.id,
+    name: m.name,
+    unit: m.unit,
+    quantity: n(m.quantity),
+    unitCost: n(m.unitCost),
+    wastePct: n(m.wastePct),
+  };
+}
+
 function calcStateToInput(s: CalcState, ctx: Pick<CalculatorContext, "rates" | "overtimeMultiplier" | "hoursPerDay">): QuoteInput {
   return {
     rubros: s.rubros.map((r) => ({
       rubro: r.rubro,
-      materials: r.materials.map((m) => ({
-        materialId: MATERIAL_CATALOG.find((c) => c.name.toLowerCase() === m.name.trim().toLowerCase())?.id,
-        name: m.name,
-        unit: m.unit,
-        quantity: n(m.quantity),
-        unitCost: n(m.unitCost),
-        wastePct: n(m.wastePct),
-      })),
+      materials: r.materials.map(materialRowToQuote),
       workers: Math.round(n(r.workers)),
       hoursPerWorker: n(r.hoursPerWorker),
       designHours: n(r.designHours),

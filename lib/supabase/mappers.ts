@@ -6,6 +6,7 @@ import { DEFAULT_FINANCIAL_PCT, DEFAULT_HOURS_PER_DAY, DEFAULT_OVERTIME_MULTIPLI
 import { isRubroId } from "@/lib/rubros";
 import type {
   ActivityEvent,
+  PurchaseLineStatus,
   ActualEntry,
   Attachment,
   BudgetLine,
@@ -702,4 +703,20 @@ export function assignmentFromRow(r: Row): WorkAssignment {
 /** Argumento de planta_save_assignment (la base valida y completa quién la cargó). */
 export function assignmentToParams(a: Pick<WorkAssignment, "id" | "projectId" | "rubro" | "operatorId" | "date" | "plannedHours" | "notes">): Row {
   return { id: a.id, project_id: a.projectId, rubro: a.rubro, operator_id: a.operatorId, date: a.date, planned_hours: a.plannedHours, notes: a.notes ?? null };
+}
+
+export function lineStatusFromRow(r: Row): PurchaseLineStatus {
+  const status = String(r.status);
+  return {
+    projectId: String(r.project_id),
+    lineId: String(r.line_id),
+    status: status === "quoting" || status === "purchased" || status === "received" ? status : "pending",
+    updatedBy: String(r.updated_by ?? ""),
+    updatedAt: iso(r.updated_at),
+  };
+}
+
+/** Elemento de line_statuses de compras_save (la base valida la línea y completa quién lo cambió). */
+export function lineStatusToParams(s: Pick<PurchaseLineStatus, "projectId" | "lineId" | "status">): Row {
+  return { project_id: s.projectId, line_id: s.lineId, status: s.status };
 }

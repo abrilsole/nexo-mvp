@@ -9,6 +9,7 @@ import { movementSentence, MOVEMENT_LABELS, projectCode } from "@/lib/stock-labe
 import { formatCurrency, formatDate, formatDateTime, formatNumber, formatQty } from "@/lib/formatting";
 import { useAppStore } from "@/store/use-app-store";
 import { useIdentity } from "@/store/selectors";
+import { projectHref } from "@/lib/permissions";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,13 +63,15 @@ function lotLabel(l: StockLot) {
   return `${l.kind === "leftover" ? "Sobrante" : l.kind === "opening" ? "Inventario inicial" : "Compra"}${d ? ` · ${d}` : ""}`;
 }
 
-export function StockPage({ material, lot, tab }: { material?: string; lot?: string; tab?: string }) {
+/** El mismo módulo para Administrativo (/stock) y Compras (/compras/stock): los dos compran y mueven stock. */
+export function StockPage({ material, lot, tab, basePath = "/stock" }: { material?: string; lot?: string; tab?: string; basePath?: string }) {
   const stock = useAppStore((s) => s.stock);
   const projects = useAppStore((s) => s.projects);
   const requests = useAppStore((s) => s.requests);
   const setRequestStatus = useAppStore((s) => s.setRequestStatus);
   const updateLotLocation = useAppStore((s) => s.updateLotLocation);
-  const { isManager } = useIdentity();
+  const { isBuyer: canManage, roleKey } = useIdentity();
+  const projectLink = (id: string, tabName?: string) => projectHref(roleKey, id, tabName);
   const [query, setQuery] = useState("");
   const [add, setAdd] = useState(false);
   const [act, setAct] = useState<Act | null>(null);
@@ -97,10 +100,10 @@ export function StockPage({ material, lot, tab }: { material?: string; lot?: str
   return (
     <div>
       <PageHeader
-        back={material || lot || tab ? "/stock" : undefined}
+        back={material || lot || tab ? basePath : undefined}
         title="Stock"
         subtitle="Todo el material físico: libre en el depósito y asignado a proyectos. Cada lote conserva su costo original."
-        actions={isManager ? <Button onClick={() => setAdd(true)}><Plus /> Ingresar stock</Button> : undefined}
+        actions={canManage ? <Button onClick={() => setAdd(true)}><Plus /> Ingresar stock</Button> : undefined}
       />
       <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
         <Card><CardContent className="p-4"><div className="text-xs text-slate-500">Valor total en stock</div><div className="text-lg font-semibold tabular">{formatCurrency(total)}</div></CardContent></Card>
@@ -167,7 +170,7 @@ export function StockPage({ material, lot, tab }: { material?: string; lot?: str
                                   {r.byProject.map((b, i) => (
                                     <span key={b.projectId}>
                                       {i > 0 && " · "}
-                                      <Link className="text-blue-700 hover:underline" href={`/projects/${b.projectId}?tab=materials`}>
+                                      <Link className="text-blue-700 hover:underline" href={projectLink(b.projectId, "materials")}>
                                         {projectCode(projects, b.projectId)}
                                       </Link>{" "}
                                       {formatQty(b.quantity, r.unit)}
@@ -187,7 +190,7 @@ export function StockPage({ material, lot, tab }: { material?: string; lot?: str
                                     </span>
                                     <span className="ml-auto flex gap-1.5">
                                       <Button size="sm" variant="outline" onClick={() => setTrailLot(l.id)}>Recorrido</Button>
-                                      {isManager && (
+                                      {canManage && (
                                         <>
                                           <Button size="sm" variant="ghost" onClick={() => editLocation(l)}>Ubicación</Button>
                                           {(bal?.warehouse ?? 0) > EPS && (
@@ -251,7 +254,7 @@ export function StockPage({ material, lot, tab }: { material?: string; lot?: str
                       <TD className="text-right tabular">{formatCurrency(l.quantity * l.lot.unitCost)}</TD>
                       <TD className="text-xs">
                         {l.lot.originProjectId ? (
-                          <Link href={`/projects/${l.lot.originProjectId}`} className="text-blue-700 hover:underline">{l.lot.originProjectName}</Link>
+                          <Link href={projectLink(l.lot.originProjectId)} className="text-blue-700 hover:underline">{l.lot.originProjectName}</Link>
                         ) : "—"}
                       </TD>
                       <TD className="text-xs text-slate-600">
@@ -260,7 +263,7 @@ export function StockPage({ material, lot, tab }: { material?: string; lot?: str
                       <TD>
                         <div className="flex gap-1.5">
                           <Button size="sm" variant="outline" onClick={() => setTrailLot(l.lot.id)}>Recorrido</Button>
-                          {isManager && !l.assignedProjectId && (
+                          {canManage && !l.assignedProjectId && (
                             <Button
                               size="sm"
                               onClick={() =>
@@ -304,13 +307,13 @@ export function StockPage({ material, lot, tab }: { material?: string; lot?: str
                   {[...requests].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((r) => (
                     <TR key={r.id}>
                       <TD className="whitespace-nowrap tabular">{formatDateTime(r.createdAt)}</TD>
-                      <TD><Link className="text-blue-700 hover:underline" href={`/projects/${r.projectId}?tab=materials`}>{projectCode(projects, r.projectId)}</Link></TD>
+                      <TD><Link className="text-blue-700 hover:underline" href={projectLink(r.projectId, "materials")}>{projectCode(projects, r.projectId)}</Link></TD>
                       <TD>{r.materialName}{r.note && <div className="text-xs text-slate-500">{r.note}</div>}</TD>
                       <TD className="text-right tabular">{formatQty(r.quantity, r.unit)}</TD>
                       <TD>{r.requestedBy}</TD>
                       <TD><Badge tone={r.status === "open" ? "yellow" : r.status === "resolved" ? "green" : "gray"}>{r.status === "open" ? "Abierto" : r.status === "resolved" ? "Resuelto" : "Cancelado"}</Badge></TD>
                       <TD>
-                        {isManager && r.status === "open" && (
+                        {canManage && r.status === "open" && (
                           <div className="flex gap-1.5">
                             <Button size="sm" variant="outline" onClick={() => setRequestStatus(r.id, "resolved")}>Resuelto</Button>
                             <Button size="sm" variant="ghost" onClick={() => setRequestStatus(r.id, "cancelled")}>Cancelar</Button>

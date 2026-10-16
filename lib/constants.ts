@@ -195,6 +195,8 @@ export const DEFAULT_SETTINGS: AlertSettings = {
   // Supuesto a ajustar con el cliente (Lote 5B): 25 % o 2 h por encima de lo previsto, lo que ocurra primero.
   hoursDeviationPct: 25,
   hoursDeviationHours: 2,
+  // Supuesto a ajustar con el cliente (Lote 5C): material sin comprar que se necesita en 7 días o menos.
+  purchaseLeadDays: 7,
 };
 
 /** Usuarios de ejemplo de la demo (el Operario de la demo se elige entre los operarios cargados). */

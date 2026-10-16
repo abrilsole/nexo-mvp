@@ -4,9 +4,11 @@ import { useCallback, useMemo } from "react";
 import type { Alert, EconomicHealth, Project } from "@/types";
 import { allAlerts, openAlertCount, projectHealth, sortAlerts, splitAlerts } from "@/lib/alerts";
 import { plantAlerts } from "@/lib/plant";
+import { purchasingAlerts } from "@/lib/purchasing";
+import type { RoleKey } from "@/lib/permissions";
 import { projectEconomics, type ProjectEconomics } from "@/lib/calculations";
 import { todayISO } from "@/lib/formatting";
-import { isManager } from "@/lib/project-rules";
+import { isBuyer, isManager } from "@/lib/project-rules";
 import { catalogPriceAt } from "@/lib/material-options";
 import { effectiveIdentity, useAppStore } from "./use-app-store";
 
@@ -28,8 +30,25 @@ export function usePlantAlerts(): Alert[] {
   );
 }
 
+/** Alertas de Compras (Lote 5C): material sin comprar a pocos días y compras más caras que lo presupuestado. */
+export function usePurchasingAlerts(): Alert[] {
+  const projects = useAppStore((s) => s.projects);
+  const statuses = useAppStore((s) => s.lineStatuses);
+  const settings = useAppStore((s) => s.settings);
+  const today = useToday();
+  return useMemo(() => purchasingAlerts({ projects, statuses, settings, today }), [projects, statuses, settings, today]);
+}
+
+/** Número del menú "Alertas" de cada rol (el Operario no tiene alertas). */
+export function useAlertCount(role: RoleKey): number {
+  const admin = useAlerts().count;
+  const plant = usePlantAlerts().length;
+  const buying = usePurchasingAlerts().length;
+  return role === "admin" ? admin : role === "jefe_planta" ? plant : role === "compras" ? buying : 0;
+}
+
 /**
- * Alertas del Administrativo, abiertas y resueltas: las económicas y las de planta (Lote 5B).
+ * Alertas del Administrativo, abiertas y resueltas: las económicas, las de planta (Lote 5B) y las de compras (Lote 5C).
  * Es la única cuenta: globo, pestaña "Todas", alertas del proyecto y salud.
  */
 export function useAlerts(): { open: Alert[]; resolved: Alert[]; count: number } {
@@ -38,11 +57,12 @@ export function useAlerts(): { open: Alert[]; resolved: Alert[]; count: number }
   const resolvedKeys = useAppStore((s) => s.resolvedAlertIds);
   const stock = useAppStore((s) => s.stock);
   const plant = usePlantAlerts();
+  const buying = usePurchasingAlerts();
   const today = useToday();
   return useMemo(() => {
-    const split = splitAlerts(sortAlerts([...allAlerts(projects, settings, today, stock), ...plant]), resolvedKeys);
+    const split = splitAlerts(sortAlerts([...allAlerts(projects, settings, today, stock), ...plant, ...buying]), resolvedKeys);
     return { ...split, count: openAlertCount(split.open) };
-  }, [projects, settings, resolvedKeys, today, stock, plant]);
+  }, [projects, settings, resolvedKeys, today, stock, plant, buying]);
 }
 
 export function useProjectAlerts(project: Project | undefined): Alert[] {
@@ -84,7 +104,7 @@ export function useIdentity() {
   return useMemo(
     () => {
       const id = effectiveIdentity({ role, currentMode, isDemo, operators, userId, userEmail, actingOperatorId, userName });
-      return { ...id, isManager: isManager(id.role), realRole: role };
+      return { ...id, isManager: isManager(id.role), isBuyer: isBuyer(id.role), realRole: role };
     },
     [role, currentMode, isDemo, operators, userId, userEmail, actingOperatorId, userName],
   );

@@ -24,7 +24,8 @@ export function marginAlertLevel(dropPp: number, s: AlertSettings): AlertLevel {
   return "info";
 }
 
-function base(project: Project) {
+/** Proyecto de una alerta (código y nombre para mostrarla). */
+export function alertBase(project: Pick<Project, "id" | "code" | "name">) {
   return { projectId: project.id, projectCode: project.code, projectName: project.name };
 }
 
@@ -46,7 +47,7 @@ export function projectAlerts(project: Project, settings: AlertSettings, today: 
     const pl = CATEGORY_IS_PLURAL[row.category];
     if (row.budget === 0) {
       alerts.push({
-        ...base(project),
+        ...alertBase(project),
         id: `${project.id}:category:${row.category}:warning`,
         kind: "category",
         level: "warning",
@@ -61,7 +62,7 @@ export function projectAlerts(project: Project, settings: AlertSettings, today: 
     const pct = (over / row.budget) * 100;
     const level = categoryAlertLevel(pct, settings);
     alerts.push({
-      ...base(project),
+      ...alertBase(project),
       id: `${project.id}:category:${row.category}:${level}`,
       kind: "category",
       level,
@@ -78,7 +79,7 @@ export function projectAlerts(project: Project, settings: AlertSettings, today: 
     const drop = -econ.marginDeltaPp;
     const level = marginAlertLevel(drop, settings);
     alerts.push({
-      ...base(project),
+      ...alertBase(project),
       id: `${project.id}:margin:${level}`,
       kind: "margin",
       level,
@@ -96,7 +97,7 @@ export function projectAlerts(project: Project, settings: AlertSettings, today: 
     const days = daysBetween(last, today);
     if (days >= settings.daysWithoutRecords) {
       alerts.push({
-        ...base(project),
+        ...alertBase(project),
         id: `${project.id}:stale:${last}:warning`,
         kind: "stale",
         level: "warning",
@@ -111,7 +112,7 @@ export function projectAlerts(project: Project, settings: AlertSettings, today: 
   const preProduction = project.status === "approved" || project.status === "purchasing";
   if (sched.overdue) {
     alerts.push({
-      ...base(project),
+      ...alertBase(project),
       id: `${project.id}:due:${project.dueDate}:critical`,
       kind: "due",
       level: "critical",
@@ -120,7 +121,7 @@ export function projectAlerts(project: Project, settings: AlertSettings, today: 
     });
   } else if (preProduction && sched.remainingDays <= settings.dueSoonDays) {
     alerts.push({
-      ...base(project),
+      ...alertBase(project),
       id: `${project.id}:due:${project.dueDate}:warning`,
       kind: "due",
       level: "warning",
@@ -129,7 +130,7 @@ export function projectAlerts(project: Project, settings: AlertSettings, today: 
     });
   } else if (preProduction && sched.elapsedPct >= settings.deadlineNoProductionPct) {
     alerts.push({
-      ...base(project),
+      ...alertBase(project),
       id: `${project.id}:deadline:${settings.deadlineNoProductionPct}:warning`,
       kind: "due",
       level: "warning",
@@ -142,7 +143,7 @@ export function projectAlerts(project: Project, settings: AlertSettings, today: 
   // Se resuelve sola al asignar a alguien (la alerta se deriva del equipo).
   if (EXECUTION_STATUSES.includes(project.status) && project.assignedOperatorIds.length === 0) {
     alerts.push({
-      ...base(project),
+      ...alertBase(project),
       id: `${project.id}:staffing:warning`,
       kind: "staffing",
       level: "warning",
@@ -165,7 +166,7 @@ export function projectAlerts(project: Project, settings: AlertSettings, today: 
     for (const [key, m] of byMaterial) {
       const q = formatQty(m.qty, m.unit);
       alerts.push({
-        ...base(project),
+        ...alertBase(project),
         id: `${project.id}:reconciliation:${key}:${Math.round(m.qty * 1000)}`,
         kind: "reconciliation",
         level: fabricationDone ? "warning" : "info",
