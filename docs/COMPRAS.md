@@ -42,7 +42,7 @@ Se ve como etiqueta en el proyecto (Administrativo), en Necesidades, en los Proy
 
 1. **Borrador:** se crea desde Necesidades eligiendo materiales (pueden ser de varios proyectos). Lleva número correlativo (OC-0001…), proveedor, fecha, nota, y por material cantidad y **costo unitario real** (el que se consiguió; la negociación queda afuera del sistema). Solo el borrador se puede editar.
 2. **Enviada:** Compras la marca cuando la mandó al proveedor (por fuera del sistema).
-3. **Facturada:** se carga n° de factura, monto y fecha. **Recién ahí cambia el costo real** del proyecto: se crea una compra real por cada material con su proveedor y la nota "OC-0001 · factura …".
+3. **Facturada:** se carga n° de factura, monto y fecha. **Ahí se registra el importe comprado**; el costo imputable al proyecto cambia con el consumo y el desperdicio: se crea una compra real por cada material con su proveedor y la nota "OC-0001 · factura …".
 - **Pagada sí/no:** solo un dato; **no cambia el costo**.
 - **Recibida no / parcial / sí:** se puede recibir en partes (desde Enviada). Lo que llega entra al stock del proyecto como un lote con el costo real de la orden.
 

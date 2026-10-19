@@ -724,6 +724,7 @@ export function hourRateToRow(org: string, h: HourRate, position: number): Row {
 
 export function assignmentFromRow(r: Row): WorkAssignment {
   return {
+    hourKind: (r.hour_kind === "design" || r.hour_kind === "admin") ? r.hour_kind : "labor",
     id: String(r.id),
     projectId: String(r.project_id),
     itemId: opt(r.item_id as string | null),
@@ -738,9 +739,10 @@ export function assignmentFromRow(r: Row): WorkAssignment {
 }
 
 /** Argumento de planta_save_assignment (la base valida y completa quién la cargó). */
-export function assignmentToParams(a: Pick<WorkAssignment, "id" | "projectId" | "itemId" | "rubro" | "operatorId" | "date" | "plannedHours" | "notes">): Row {
+export function assignmentToParams(a: Pick<WorkAssignment, "id" | "projectId" | "itemId" | "rubro" | "operatorId" | "date" | "plannedHours" | "notes" | "hourKind">): Row {
   return {
     id: a.id,
+    hour_kind: a.hourKind ?? "labor",
     project_id: a.projectId,
     item_id: a.itemId ?? null,
     rubro: a.rubro,

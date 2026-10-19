@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useMemo } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -29,7 +30,7 @@ export function PurchaseForm({
   /** Para comprar lo que falta de un material desde la pestaña Materiales. */
   prefill?: { materialId: string; quantity: number };
 }) {
-  const addPurchaseEntry = useAppStore((s) => s.addPurchaseEntry);
+  const addPurchaseEntry = useConfirmedAction("addPurchaseEntry");
   const lots = useAppStore((s) => s.stock.lots);
   const options = useMemo(() => projectMaterialOptions(project), [project]);
   const { register, handleSubmit, control, setValue, setError, formState } = useForm<PurchaseValues>({
@@ -60,10 +61,10 @@ export function PurchaseForm({
     }
   };
 
-  const submit = (v: PurchaseValues) => {
+  const submit = async (v: PurchaseValues) => {
     const isOther = v.materialId === OTHER_MATERIAL_ID;
     const o = options.find((x) => x.id === v.materialId);
-    const res = addPurchaseEntry(project.id, {
+    const res = await addPurchaseEntry(project.id, {
       materialId: isOther ? `custom:${slugify(v.customName ?? "")}` : v.materialId,
       materialName: isOther ? (v.customName ?? "").trim() : o?.name ?? v.materialId,
       quantity: v.quantity,

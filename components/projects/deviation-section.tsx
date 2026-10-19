@@ -26,7 +26,7 @@ export function DeviationSection({ econ, settings, completed }: { econ: ProjectE
         <CardDescription>
           {completed
             ? "Costo presupuestado vs. costo real final, en las categorías de reporte."
-            : "Costo presupuestado vs. costo real hasta hoy, en las categorías de reporte. El costo final proyectado toma el mayor de los dos."}
+            : "Costo presupuestado vs. costo real hasta hoy, en las categorías de reporte. El proyectado considera cantidades pendientes identificables y nunca baja del presupuesto ni del costo real."}
         </CardDescription>
       </CardHeader>
       <Table>

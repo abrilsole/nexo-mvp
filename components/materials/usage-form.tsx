@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useMemo, useState } from "react";
 import { PackageX } from "lucide-react";
 import type { Project } from "@/types";
@@ -58,7 +59,7 @@ export function UsageForm({
 }) {
   const big = variant === "workshop";
   const stock = useAppStore((s) => s.stock);
-  const registerUsage = useAppStore((s) => s.registerUsage);
+  const registerUsage = useConfirmedAction("registerUsage");
   const groups = useMemo(() => materialGroups(stock, project.id), [stock, project.id]);
 
   const [materialId, setMaterialId] = useState("");
@@ -86,7 +87,7 @@ export function UsageForm({
   // Costo estimado según los lotes que se usarían (sólo Gestión lo ve).
   const unitCost = lot ? lot.lot.unitCost : group ? group.lots.reduce((s, l) => s + l.quantity * l.lot.unitCost, 0) / Math.max(group.quantity, 1e-9) : 0;
 
-  const submit = () => {
+  const submit = async () => {
     if (!group) return setError("Elegí un material.");
     if (usedN + wasteN <= 0 && leftoverN <= 0) return setError("Indicá cuánto usaste.");
     if (hasWaste && wasteN <= 0) return setError("Indicá cuánto se desperdició.");
@@ -98,7 +99,7 @@ export function UsageForm({
       // Sólo sobrante: no hay consumo; se marca desde la pestaña de materiales.
       return setError("Registrá también cuánto usaste. Para devolver material sin usarlo, usá las acciones de la pestaña Materiales.");
     }
-    const res = registerUsage(project.id, {
+    const res = await registerUsage(project.id, {
       materialId: group.materialId,
       materialName: group.name,
       unit,

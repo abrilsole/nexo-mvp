@@ -1,9 +1,9 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useState } from "react";
 import { MATERIAL_CATALOG, OTHER_MATERIAL_ID } from "@/lib/constants";
 import { parseDecimal } from "@/lib/schemas";
 import { todayISO } from "@/lib/formatting";
-import { useAppStore } from "@/store/use-app-store";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
@@ -17,7 +17,7 @@ type Kind = "purchase" | "opening";
  * hasta que se asigne y se consuma: compra ≠ costo.
  */
 export function AddStockDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const addStockLot = useAppStore((s) => s.addStockLot);
+  const addStockLot = useConfirmedAction("addStockLot");
   const [kind, setKind] = useState<Kind>("purchase");
   const [materialId, setMaterialId] = useState("");
   const [name, setName] = useState("");
@@ -41,7 +41,7 @@ export function AddStockDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     }
   };
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const err: Record<string, string> = {};
     const custom = materialId === OTHER_MATERIAL_ID;
@@ -55,7 +55,7 @@ export function AddStockDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     setErrors(err);
     if (Object.keys(err).length) return;
     const cat = MATERIAL_CATALOG.find((m) => m.id === materialId);
-    const res = addStockLot({
+    const res = await addStockLot({
       ...(custom ? {} : { materialId }),
       materialName: custom ? name.trim() : (cat?.name ?? name),
       unit: unit.trim(),

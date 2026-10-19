@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 // Jefe de planta → Proyectos (Lote 6): por producto, su estado y el contador de unidades terminadas (lo carga el
 // Jefe de planta); por rubro, horas estimadas, operarios pedidos/asignados y horas cargadas; por operario,
 // "cumplió / se pasó X h". Semáforo de entrega del proyecto. Sin importes.
@@ -139,11 +140,11 @@ function OperatorChip({ name, work: o }: { name: string; work: OperatorWork }) {
 
 /** Contador de unidades terminadas (ej. 40/100). Solo Jefe de planta (o Administrativo). */
 function UnitsCounter({ project, item }: { project: Project; item: ProjectItem }) {
-  const setCompletedUnits = useAppStore((s) => s.setCompletedUnits);
+  const setCompletedUnits = useConfirmedAction("setCompletedUnits");
   const [value, setValue] = useState(String(item.completedUnits));
   const [error, setError] = useState("");
-  const save = (n: number) => {
-    const r = setCompletedUnits(project.id, item.id, n);
+  const save = async (n: number) => {
+    const r = await setCompletedUnits(project.id, item.id, n);
     if (!r.ok) return setError(r.error);
     setError("");
     setValue(String(n));

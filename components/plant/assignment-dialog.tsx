@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 // Asignar trabajo: proyecto → producto → rubro → operario(s) → días → horas por día. Sin importes.
 // Al crear se pueden elegir varias personas y un rango de días (una asignación por persona y día hábil);
 // al editar se cambia esa sola asignación.
@@ -18,7 +19,7 @@ import { Field } from "@/components/ui/field";
 import { Input, Select } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
-export type AssignmentDraft = Partial<Pick<WorkAssignment, "id" | "projectId" | "itemId" | "rubro" | "operatorId" | "date" | "plannedHours">>;
+export type AssignmentDraft = Partial<Pick<WorkAssignment, "id" | "projectId" | "itemId" | "rubro" | "operatorId" | "date" | "plannedHours" | "hourKind">>;
 
 export function AssignmentDialog({ draft, onClose }: { draft: AssignmentDraft | null; onClose: () => void }) {
   return (
@@ -33,9 +34,10 @@ export function AssignmentDialog({ draft, onClose }: { draft: AssignmentDraft | 
 function AssignmentForm({ draft, onClose }: { draft: AssignmentDraft; onClose: () => void }) {
   const projects = useAppStore((s) => s.projects).filter(isAssignable);
   const operators = activeOperators(useAppStore((s) => s.operators));
-  const saveAssignment = useAppStore((s) => s.saveAssignment);
-  const removeAssignment = useAppStore((s) => s.removeAssignment);
+  const saveAssignment = useConfirmedAction("saveAssignment");
+  const removeAssignment = useConfirmedAction("removeAssignment");
   const editing = !!draft.id;
+  const [hourKind, setHourKind] = useState<"labor" | "design" | "admin">(draft.hourKind ?? "labor");
   const materialsOf = useMaterialsStateOf();
   const [projectId, setProjectId] = useState(draft.projectId ?? projects[0]?.id ?? "");
   const project = projects.find((p) => p.id === projectId);
@@ -76,14 +78,14 @@ function AssignmentForm({ draft, onClose }: { draft: AssignmentDraft; onClose: (
 
   const toggle = (id: string) => (editing ? setPicked([id]) : setPicked(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]));
 
-  const save = (e: React.FormEvent) => {
+  const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!item || !chosenRubro) return setError("Elegí el producto y el rubro.");
     if (picked.length === 0) return setError("Elegí al menos un operario.");
     if (total === 0) return setError(editing ? "Elegí el día." : "Elegí desde y hasta qué día: en ese rango no hay días laborales de esas personas.");
     for (const operatorId of picked) {
       for (const date of daysFor(operatorId)) {
-        const r = saveAssignment({ id: draft.id, projectId, itemId: item.id, rubro: chosenRubro, operatorId, date, plannedHours: parseDecimal(hours) });
+        const r = await saveAssignment({ id: draft.id, projectId, itemId: item.id, rubro: chosenRubro, operatorId, date, plannedHours: parseDecimal(hours), hourKind });
         if (!r.ok) return setError(r.error);
       }
     }
@@ -97,6 +99,7 @@ function AssignmentForm({ draft, onClose }: { draft: AssignmentDraft; onClose: (
         <DialogDescription>Cada persona lo ve en &quot;Mi día&quot; con las horas estimadas y solo carga las horas que trabajó.</DialogDescription>
       </DialogHeader>
       <form onSubmit={save} noValidate className="space-y-4">
+        <Field label="Tipo de trabajo" htmlFor="as-kind"><Select id="as-kind" value={hourKind} onChange={e=>setHourKind(e.target.value as typeof hourKind)}><option value="labor">Producción</option><option value="design">Diseño</option><option value="admin">Administración</option></Select></Field>
         <Field label="Proyecto" htmlFor="as-project">
           <Select id="as-project" value={projectId} onChange={(e) => { setProjectId(e.target.value); setItemId(""); }}>
             {projects.map((p) => (
@@ -173,8 +176,8 @@ function AssignmentForm({ draft, onClose }: { draft: AssignmentDraft; onClose: (
               type="button"
               variant="ghost"
               className="text-red-700 sm:mr-auto"
-              onClick={() => {
-                const r = removeAssignment(draft.id as string);
+              onClick={async () => {
+                const r = await removeAssignment(draft.id as string);
                 if (!r.ok) return setError(r.error);
                 onClose();
               }}

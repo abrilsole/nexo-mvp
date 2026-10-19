@@ -143,6 +143,40 @@ export function projectedCategoryCost(budget: number, actual: number): number {
   return Math.max(budget, actual);
 }
 
+/** Regla transparente: real + cantidades presupuestadas pendientes, sin descontar sobrecostos ya ocurridos.
+ * Si no hay cantidades identificables, mantiene el piso max(presupuesto, real).
+ * No usa la factura como consumo ni interpreta plazo transcurrido como avance físico.
+ */
+export function projectedAmounts(project: Pick<Project,"budgetLines"|"actualEntries"|"materialUsages"> & Partial<Pick<Project,"purchaseEntries">>): CategoryAmounts {
+  const budget = budgetByCategory(project.budgetLines);
+  const actual = actualByCategory(project);
+  const out = emptyCategoryAmounts();
+  for (const category of CATEGORY_ORDER) out[category] = Math.max(budget[category],actual[category]);
+  const materialLines = project.budgetLines.filter(l=>l.category === "materials");
+  // Solo extrapola cuando todas las líneas tienen material y unidad: evita inventar correspondencias.
+  if (materialLines.length && materialLines.every(l=>l.materialId && l.quantity !== null && l.quantity > 0)) {
+    let remaining = 0;
+    for (const key of new Set(materialLines.map(l=>`${l.materialId}|${l.unit}`))) {
+      const lines = materialLines.filter(l=>`${l.materialId}|${l.unit}` === key);
+      const quantity = lines.reduce((sum,l)=>sum+(l.quantity ?? 0),0);
+      const used = project.materialUsages.filter(u=>`${u.materialId}|${u.unit}` === key).reduce((sum,u)=>sum+u.quantityConsumed+u.wasteQuantity,0);
+      const budgetRate = lines.reduce((sum,l)=>sum+l.total,0)/quantity;
+      const latest = (project.purchaseEntries ?? []).filter(e=>`${e.materialId}|${e.unit}` === key).sort((a,b)=>b.date.localeCompare(a.date))[0];
+      remaining += Math.max(0,quantity-used)*Math.max(budgetRate,latest?.unitCost ?? budgetRate);
+    }
+    out.materials = Math.max(out.materials,actual.materials+remaining);
+  }
+  for (const category of ["labor","design","admin"] as const) {
+    const lines = project.budgetLines.filter(l=>l.category === category);
+    if (!lines.length || !lines.every(l=>l.quantity !== null && l.quantity>0 && l.unit === "h")) continue;
+    const planned = lines.reduce((sum,l)=>sum+(l.quantity ?? 0),0);
+    const recorded = project.actualEntries.filter(e=>e.type === "labor" && e.category === category).reduce((sum,e)=>sum+(e.labor?.hours ?? 0),0);
+    out[category] = Math.max(out[category],actual[category]+Math.max(0,planned-recorded)*(budget[category]/planned));
+  }
+  for (const category of CATEGORY_ORDER) out[category]=round2(out[category]);
+  return out;
+}
+
 export interface CategoryRow {
   category: BudgetCategory;
   budget: number;
@@ -159,8 +193,9 @@ export function categoryBreakdown(project: Project): CategoryRow[] {
   const b = budgetByCategory(project.budgetLines);
   const a = actualByCategory(project);
   const completed = project.status === "completed";
+  const projection = projectedAmounts(project);
   return CATEGORY_ORDER.map((category) => {
-    const projected = completed ? a[category] : projectedCategoryCost(b[category], a[category]);
+    const projected = completed ? a[category] : projection[category];
     return {
       category,
       budget: b[category],
@@ -174,10 +209,9 @@ export function categoryBreakdown(project: Project): CategoryRow[] {
 
 // ── Rentabilidad proyectada y final ─────────────────────────────────
 
-export function projectedFinalCost(project: Pick<Project, "budgetLines" | "actualEntries" | "materialUsages">): number {
-  const b = budgetByCategory(project.budgetLines);
-  const a = actualByCategory(project);
-  return round2(CATEGORY_ORDER.reduce((s, c) => s + projectedCategoryCost(b[c], a[c]), 0));
+export function projectedFinalCost(project: Pick<Project, "budgetLines" | "actualEntries" | "materialUsages"> & Partial<Pick<Project,"purchaseEntries">>): number {
+  const projected = projectedAmounts(project);
+  return round2(CATEGORY_ORDER.reduce((sum,category)=>sum+projected[category],0));
 }
 
 export function projectedProfit(project: Project): number {

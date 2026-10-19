@@ -24,3 +24,7 @@ export async function setMemberActive(db: SupabaseClient, userId: string, active
 export async function revokeInvitation(db: SupabaseClient, id: string) {
   check(await db.rpc("admin_revoke_invitation", { p_id: id }));
 }
+
+export async function setCommercialAccess(db: SupabaseClient, userId: string, enabled: boolean) {
+  check(await db.rpc("admin_set_commercial_access", { p_user: userId, p_enabled: enabled }));
+}

@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 // Configuración en pestañas: Alertas · Tarifas y horas · Costos · Usuarios · Datos (solo Administrativo).
 // Cada sección tiene un solo "Guardar", avisa si hay cambios sin guardar y puede volver a los valores por defecto.
 import { useState } from "react";
@@ -171,7 +172,7 @@ const numOr = (value: unknown, fallback: number) => (typeof value === "number" &
 
 function AlertsSection() {
   const settings = useAppStore((s) => s.settings);
-  const updateSettings = useAppStore((s) => s.updateSettings);
+  const updateSettings = useConfirmedAction("updateSettings");
   const [saved, setSaved] = useState(false);
   const { register, handleSubmit, reset, control, formState } = useForm<AlertSettings>({ resolver: zodResolver(alertsSchema), defaultValues: settings });
   const raw = useWatch({ control });
@@ -189,8 +190,9 @@ function AlertsSection() {
       <CardContent>
         <form
           noValidate
-          onSubmit={handleSubmit((v) => {
-            updateSettings(v);
+          onSubmit={handleSubmit(async (v) => {
+            const result = await updateSettings(v);
+            if (!result.ok) return;
             reset(v);
             setSaved(true);
           })}
@@ -242,8 +244,8 @@ const sameForm = (a: RatesForm, b: RatesForm) => JSON.stringify(a) === JSON.stri
 function RatesSection() {
   const hourRates = useAppStore((s) => s.hourRates);
   const { overtimeMultiplier, hoursPerDay, laborValuation } = useAppStore((s) => s.costSettings);
-  const saveHourRates = useAppStore((s) => s.saveHourRates);
-  const updateCostSettings = useAppStore((s) => s.updateCostSettings);
+  const saveHourRates = useConfirmedAction("saveHourRates");
+  const updateCostSettings = useConfirmedAction("updateCostSettings");
   const costSettings = useAppStore((s) => s.costSettings);
   const stored = ratesFormOf(hourRates, overtimeMultiplier, hoursPerDay);
   const [form, setForm] = useState<RatesForm>(stored);
@@ -252,14 +254,14 @@ function RatesSection() {
   const [error, setError] = useState("");
   const dirty = !sameForm(form, stored);
 
-  const save = () => {
+  const save = async () => {
     const rates = hourRates.map((r) => ({ ...r, hourlyRate: parseDecimal(form.rates[r.id] ?? "") }));
     const next = { ...costSettings, overtimeMultiplier: parseDecimal(form.overtimeMultiplier), hoursPerDay: parseDecimal(form.hoursPerDay) };
     const problem = hourRatesError(rates) ?? costSettingsError(next);
     if (problem) return setError(problem);
-    const r1 = saveHourRates(rates, validFrom);
+    const r1 = await saveHourRates(rates, validFrom);
     if (!r1.ok) return setError(r1.error);
-    const r2 = updateCostSettings({ overtimeMultiplier: next.overtimeMultiplier, hoursPerDay: next.hoursPerDay }, validFrom);
+    const r2 = await updateCostSettings({ overtimeMultiplier: next.overtimeMultiplier, hoursPerDay: next.hoursPerDay }, validFrom);
     if (!r2.ok) return setError(r2.error);
     // Con fecha futura, lo que se ve hoy sigue siendo el valor de hoy.
     const now = useAppStore.getState();
@@ -361,7 +363,7 @@ function RatesSection() {
 
 /** Cómo se valúan las horas reales: hipótesis a confirmar con el cliente; el modelo admite las dos. */
 function LaborValuationCard({ value }: { value: LaborValuation }) {
-  const updateCostSettings = useAppStore((s) => s.updateCostSettings);
+  const updateCostSettings = useConfirmedAction("updateCostSettings");
   const [error, setError] = useState("");
   return (
     <Card>
@@ -379,8 +381,8 @@ function LaborValuationCard({ value }: { value: LaborValuation }) {
           name="Costo real de las horas"
           value={value}
           columns={1}
-          onChange={(v) => {
-            const r = updateCostSettings({ laborValuation: v });
+          onChange={async (v) => {
+            const r = await updateCostSettings({ laborValuation: v });
             setError(r.ok ? "" : r.error);
           }}
           options={[
@@ -397,7 +399,7 @@ function LaborValuationCard({ value }: { value: LaborValuation }) {
 /** Precios de catálogo de los materiales, con vigencia. Solo cambian las cotizaciones nuevas. */
 function MaterialPricesCard() {
   const history = useAppStore((s) => s.priceHistory);
-  const setMaterialPrices = useAppStore((s) => s.setMaterialPrices);
+  const setMaterialPrices = useConfirmedAction("setMaterialPrices");
   const today = todayISO();
   const current = (id: string) => catalogPriceAt(history, id, today);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -420,9 +422,9 @@ function MaterialPricesCard() {
         <form
           noValidate
           className="space-y-4"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
-            const r = setMaterialPrices(
+            const r = await setMaterialPrices(
               changed.map((m) => ({ materialId: m.id, value: parseDecimal(values[m.id]), previousValue: current(m.id) })),
               validFrom,
             );
@@ -469,7 +471,7 @@ function MaterialPricesCard() {
 
 function CostsSection() {
   const financialPct = useAppStore((s) => s.costSettings.financialPct);
-  const updateCostSettings = useAppStore((s) => s.updateCostSettings);
+  const updateCostSettings = useConfirmedAction("updateCostSettings");
   const [value, setValue] = useState(() => asText(financialPct));
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -484,9 +486,9 @@ function CostsSection() {
         <form
           noValidate
           className="space-y-6"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
-            const res = updateCostSettings({ financialPct: parseDecimal(value) });
+            const res = await updateCostSettings({ financialPct: parseDecimal(value) });
             if (!res.ok) return setError(res.error);
             setError("");
             setSaved(true);

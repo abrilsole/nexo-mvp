@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useMemo, useState } from "react";
 import { HardHat, Plus, Trash2, UserCheck, UserMinus } from "lucide-react";
 import type { Operator } from "@/types";
@@ -22,10 +23,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 type Confirm = "deactivate" | "delete" | null;
 
 function OperatorDialog({ operator, hasRecords, open, onOpenChange }: { operator: Operator | null; hasRecords: boolean; open: boolean; onOpenChange: (o: boolean) => void }) {
-  const createOperator = useAppStore((s) => s.createOperator);
-  const updateOperator = useAppStore((s) => s.updateOperator);
-  const reactivateOperator = useAppStore((s) => s.reactivateOperator);
-  const deleteOperator = useAppStore((s) => s.deleteOperator);
+  const createOperator = useConfirmedAction("createOperator");
+  const updateOperator = useConfirmedAction("updateOperator");
+  const reactivateOperator = useConfirmedAction("reactivateOperator");
+  const deleteOperator = useConfirmedAction("deleteOperator");
   const [name, setName] = useState(operator?.name ?? "");
   const [role, setRole] = useState(operator?.role ?? "");
   const [rate, setRate] = useState(operator ? String(operator.hourlyCost) : "");
@@ -34,17 +35,17 @@ function OperatorDialog({ operator, hasRecords, open, onOpenChange }: { operator
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [error, setError] = useState("");
 
-  const save = (e: React.FormEvent) => {
+  const save = async (e: React.FormEvent) => {
     e.preventDefault();
     const input = { name, role, hourlyCost: parseDecimal(rate), email: email.trim() || undefined, userId: operator?.userId };
-    const r = operator ? updateOperator(operator.id, input, validFrom) : createOperator(input);
+    const r = operator ? await updateOperator(operator.id, input, validFrom) : await createOperator(input);
     if (!r.ok) return setError(r.error);
     onOpenChange(false);
   };
 
-  const act = (fn: (id: string) => Result) => {
+  const act = async (fn: (id: string) => Promise<Result>) => {
     if (!operator) return;
-    const r = fn(operator.id);
+    const r = await fn(operator.id);
     if (!r.ok) return setError(r.error);
     onOpenChange(false);
   };
@@ -137,7 +138,7 @@ function OperatorDialog({ operator, hasRecords, open, onOpenChange }: { operator
 export function OperatorsPage({ op }: { op?: string }) {
   const operators = useAppStore((s) => s.operators);
   const projects = useAppStore((s) => s.projects);
-  const reactivateOperator = useAppStore((s) => s.reactivateOperator);
+  const reactivateOperator = useConfirmedAction("reactivateOperator");
   const { isManager } = useIdentity();
   const [editing, setEditing] = useState<Operator | null | "new">(op ? (operators.find((o) => o.id === op) ?? null) : null);
   const [showDeactivated, setShowDeactivated] = useState(false);
@@ -209,7 +210,7 @@ export function OperatorsPage({ op }: { op?: string }) {
                       {isManager && (
                         <div className="flex justify-end gap-2">
                           {!o.active && (
-                            <Button size="sm" variant="outline" onClick={() => reactivateOperator(o.id)}>
+                            <Button size="sm" variant="outline" onClick={async () => await reactivateOperator(o.id)}>
                               <UserCheck /> Reactivar
                             </Button>
                           )}

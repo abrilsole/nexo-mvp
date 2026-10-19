@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useMemo, useState } from "react";
 import type { Project } from "@/types";
 import { OTHER_MATERIAL_ID } from "@/lib/constants";
@@ -6,14 +7,13 @@ import { projectMaterialOptions } from "@/lib/material-options";
 import { materialKey } from "@/lib/material-reconciliation";
 import { parseDecimal } from "@/lib/schemas";
 import { formatQty } from "@/lib/formatting";
-import { useAppStore } from "@/store/use-app-store";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { QuantityInput } from "./quantity-input";
 
 /** "Solicitar material": el operario avisa qué falta. No mueve stock ni genera costo. */
 export function MaterialRequestForm({ project, onDone }: { project: Project; onDone: (s: string) => void }) {
-  const createMaterialRequest = useAppStore((s) => s.createMaterialRequest);
+  const createMaterialRequest = useConfirmedAction("createMaterialRequest");
   const options = useMemo(() => projectMaterialOptions(project).filter((o) => o.inBudget), [project]);
   const [materialId, setMaterialId] = useState("");
   const [customName, setCustomName] = useState("");
@@ -25,7 +25,7 @@ export function MaterialRequestForm({ project, onDone }: { project: Project; onD
   const selected = options.find((o) => o.id === materialId);
   const unit = isOther ? customUnit.trim() || "u" : selected?.unit ?? "u";
 
-  const submit = () => {
+  const submit = async () => {
     const e: Record<string, string> = {};
     const q = parseDecimal(qty || "0");
     if (!materialId) e.material = "Elegí un material";
@@ -34,7 +34,7 @@ export function MaterialRequestForm({ project, onDone }: { project: Project; onD
     setErrors(e);
     if (Object.keys(e).length) return;
     const name = isOther ? customName.trim() : selected!.name;
-    const res = createMaterialRequest({
+    const res = await createMaterialRequest({
       projectId: project.id,
       materialId: isOther ? materialKey(undefined, customName) : materialId,
       materialName: name,

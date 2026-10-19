@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useRef, useState } from "react";
 import { FileText, Paperclip, Trash2 } from "lucide-react";
 import type { Attachment, StageKey } from "@/types";
@@ -11,7 +12,7 @@ import { Button } from "@/components/ui/button";
 const kb = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
 export function AttachmentList({ attachments, projectId, canRemove }: { attachments: Attachment[]; projectId: string; canRemove?: boolean }) {
-  const removeAttachment = useAppStore((s) => s.removeAttachment);
+  const removeAttachment = useConfirmedAction("removeAttachment");
   const [error, setError] = useState("");
   const open = async (a: Attachment) => {
     const url = await attachmentUrl(a.storagePath);
@@ -30,7 +31,7 @@ export function AttachmentList({ attachments, projectId, canRemove }: { attachme
             </button>
             <span className="hidden text-xs text-slate-500 sm:inline">{kb(a.size)} · {a.uploadedBy} · {formatDate(a.uploadedAt)}</span>
             {canRemove && (
-              <Button size="icon" variant="ghost" aria-label={`Quitar ${a.name}`} onClick={() => removeAttachment(projectId, a.id)}>
+              <Button size="icon" variant="ghost" aria-label={`Quitar ${a.name}`} onClick={async () => await removeAttachment(projectId, a.id)}>
                 <Trash2 />
               </Button>
             )}
@@ -57,7 +58,7 @@ export function AttachButton({
   capture?: boolean;
 }) {
   const orgId = useAppStore((s) => s.organizationId);
-  const addAttachment = useAppStore((s) => s.addAttachment);
+  const addAttachment = useConfirmedAction("addAttachment");
   const { actor } = useIdentity();
   const ref = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -70,7 +71,7 @@ export function AttachButton({
     try {
       for (const f of Array.from(files)) {
         const att = await uploadAttachment(f, { organizationId: orgId, projectId, itemId, stage, uploadedBy: actor });
-        const r = addAttachment(projectId, att);
+        const r = await addAttachment(projectId, att);
         if (!r.ok) throw new Error(r.error);
       }
     } catch (e) {

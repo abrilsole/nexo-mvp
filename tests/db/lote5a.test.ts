@@ -163,6 +163,8 @@ describe("usuarios: invitación, rol, baja", () => {
     expect(await rows(sofia, "select id from projects")).toHaveLength(0);
     expect((await call<{ status: string }>(sofia, "select compras_workspace() as r")).status).toBe("active");
     await asUser(db, laura, (tx) => tx.query("select admin_set_member_role($1, 'member')", [sofia]));
+    expect(await rows(sofia, "select id from projects")).toHaveLength(0);
+    await asUser(db, laura, tx => tx.query("select admin_set_commercial_access($1,true)",[sofia]));
     expect((await rows(sofia, "select id from projects")).length).toBeGreaterThan(0);
   });
   it("la baja de una cuenta le corta el acceso; al reactivarla vuelve", async () => {

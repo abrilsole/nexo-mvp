@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useState } from "react";
 import type { Project } from "@/types";
 import { formatCurrency } from "@/lib/formatting";
@@ -11,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 
 export function TeamCard({ project }: { project: Project }) {
   const operators = useAppStore((s) => s.operators);
-  const assignOperators = useAppStore((s) => s.assignOperators);
+  const assignOperators = useConfirmedAction("assignOperators");
   const { isManager } = useIdentity();
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState<string[]>(project.assignedOperatorIds);
@@ -24,8 +25,8 @@ export function TeamCard({ project }: { project: Project }) {
   }
   const assigned = operators.filter((o) => project.assignedOperatorIds.includes(o.id));
 
-  const save = () => {
-    const r = assignOperators(project.id, sel);
+  const save = async () => {
+    const r = await assignOperators(project.id, sel);
     if (!r.ok) return setError(r.error);
     setOpen(false);
   };

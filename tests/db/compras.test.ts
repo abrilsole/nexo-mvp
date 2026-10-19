@@ -143,6 +143,8 @@ describe("órdenes de compra", () => {
       last.description,
       last.unit,
     ]);
+    await db.query(`insert into stock_movements(organization_id,id,lot_id,kind,quantity,from_place,to_place,date,created_by)
+      values($1,'opening-dep','lot_dep','opening',$2,'{"type":"supplier"}','{"type":"warehouse"}',current_date,'Laura')`,[org,last.quantity]);
     await db.query(
       `insert into stock_movements (organization_id, id, lot_id, kind, quantity, from_place, to_place, date, created_by)
        values ($1, 'mov_dep', 'lot_dep', 'assign', $2, '{"type":"warehouse"}', jsonb_build_object('type', 'project', 'projectId', 'p-1051'), current_date, 'Laura')`,

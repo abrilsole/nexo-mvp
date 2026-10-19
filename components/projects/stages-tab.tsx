@@ -1,10 +1,10 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useState } from "react";
 import { TriangleAlert, NotebookPen } from "lucide-react";
 import type { Project, StageKey } from "@/types";
 import { STATUS_LABELS, STATUS_ORDER } from "@/lib/constants";
 import { formatDate, todayISO } from "@/lib/formatting";
-import { useAppStore } from "@/store/use-app-store";
 import { useIdentity } from "@/store/selectors";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +17,7 @@ const STAGES: StageKey[] = ["purchasing", "production", "installation"];
 
 /** Notas e incidencias por etapa, en orden cronológico. */
 export function StagesTab({ project }: { project: Project }) {
-  const addStageLog = useAppStore((s) => s.addStageLog);
+  const addStageLog = useConfirmedAction("addStageLog");
   const { isManager, actor } = useIdentity();
   const reached = STAGES.filter((s) => STATUS_ORDER.indexOf(s) <= STATUS_ORDER.indexOf(project.status));
   const [stage, setStage] = useState<StageKey>(reached[reached.length - 1] ?? "purchasing");
@@ -28,9 +28,9 @@ export function StagesTab({ project }: { project: Project }) {
   const [error, setError] = useState("");
   const canWrite = !project.isClosed && reached.length > 0;
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const r = addStageLog(project.id, {
+    const r = await addStageLog(project.id, {
       stage,
       date: todayISO(),
       kind,

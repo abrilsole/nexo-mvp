@@ -1,6 +1,8 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 // Configuración → Usuarios (solo Administrativo). Usuario = cuenta para entrar; persona = operario con su
 // costo por hora (Operarios). Un operario puede existir sin usuario.
+import { setCommercialAccess } from "@/lib/supabase/users";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -79,7 +81,7 @@ export function UsersSection() {
               <span className="block">Operarios sin mail: todavía no tienen forma de entrar. Está como pregunta abierta para el cliente (acceso con PIN).</span>
             </HelpTip>
           </CardTitle>
-          <CardDescription>Cada rol ve solo lo suyo. Nadie puede cambiarse el rol ni darse de baja a sí mismo, y siempre queda al menos un Administrativo.</CardDescription>
+          <CardDescription>Cada rol ve solo lo suyo. El titular habilita el acceso comercial. Administración sin ese permiso utiliza las vistas de Planta; cotizaciones y configuración requieren acceso comercial en esta versión. Nadie puede cambiarse el rol ni darse de baja a sí mismo, y siempre queda al menos un Administrativo.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {loadError && <p role="alert" className="text-sm text-red-600">No se pudieron cargar los usuarios: {loadError}</p>}
@@ -116,7 +118,7 @@ export function UsersSection() {
 }
 
 function MembersTable({ data, operators, run }: { data: { members: Member[]; invitations: Invitation[] }; operators: Operator[]; run: (fn: () => Promise<void>, ok: string) => Promise<void> }) {
-  const reactivateOperator = useAppStore((s) => s.reactivateOperator);
+  const reactivateOperator = useConfirmedAction("reactivateOperator");
   const [deactivating, setDeactivating] = useState<Member | null>(null);
   const [toOperator, setToOperator] = useState<{ member: Member; operatorId: string } | null>(null);
   const [rowError, setRowError] = useState<Record<string, string>>({});
@@ -139,9 +141,9 @@ function MembersTable({ data, operators, run }: { data: { members: Member[]; inv
     void run(() => setMemberActive(createClient(), m.userId, false), `${m.displayName} quedó dado de baja.`);
   };
 
-  const reactivate = (m: Member) => {
+  const reactivate = async (m: Member) => {
     const op = operatorOf(m);
-    if (op && !op.active) reactivateOperator(op.id);
+    if (op && !op.active) await reactivateOperator(op.id);
     void run(() => setMemberActive(createClient(), m.userId, true), `${m.displayName} quedó reactivado.`);
   };
 
@@ -154,6 +156,7 @@ function MembersTable({ data, operators, run }: { data: { members: Member[]; inv
               <TH>Nombre</TH>
               <TH>Mail</TH>
               <TH>Rol</TH>
+              <TH>Acceso comercial</TH>
               <TH>Estado</TH>
               <TH className="text-right">Acciones</TH>
             </TR>
@@ -182,6 +185,7 @@ function MembersTable({ data, operators, run }: { data: { members: Member[]; inv
                     ))}
                   </Select>
                 </TD>
+                <TD>{m.role === "owner" ? "Sí (titular)" : m.role === "member" ? <label className="text-xs"><input type="checkbox" aria-label={`Acceso comercial de ${m.displayName}`} checked={!!m.canViewCommercial} disabled={!data.members.some(x=>x.isSelf && x.role === "owner")} onChange={e=>void run(()=>setCommercialAccess(createClient(),m.userId,e.target.checked), "Permiso comercial actualizado.")} /> Puede ver costos y rentabilidad</label> : "No"}</TD>
                 <TD>{m.deactivatedAt ? <Badge tone="gray">De baja desde {formatDate(m.deactivatedAt)}</Badge> : <Badge tone="green">Activo</Badge>}</TD>
                 <TD className="text-right">
                   {m.isSelf ? null : m.deactivatedAt ? (

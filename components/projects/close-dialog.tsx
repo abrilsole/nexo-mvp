@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useMemo, useState } from "react";
 import { TriangleAlert } from "lucide-react";
 import type { Project } from "@/types";
@@ -14,10 +15,10 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { StockActionDialog, type StockAction, type StockTarget } from "@/components/stock/stock-action-dialog";
 
 export function CloseDialog({ project, open, onOpenChange }: { project: Project; open: boolean; onOpenChange: (o: boolean) => void }) {
-  const closeProject = useAppStore((s) => s.closeProject);
+  const closeProject = useConfirmedAction("closeProject");
   const [step, setStep] = useState<0 | 1>(0);
   const stock = useAppStore((s) => s.stock);
-  const registerUsage = useAppStore((s) => s.registerUsage);
+  const registerUsage = useConfirmedAction("registerUsage");
   const [error, setError] = useState("");
   const [act, setAct] = useState<{ action: StockAction; target: StockTarget } | null>(null);
   const loose = useMemo(() => unresolvedMaterial(stock, project.id), [stock, project.id]);
@@ -30,8 +31,8 @@ export function CloseDialog({ project, open, onOpenChange }: { project: Project;
     fromProjectId: project.id,
     lotId: h.lot.id,
   });
-  const markWaste = (h: (typeof loose)[number]) => {
-    const r = registerUsage(project.id, {
+  const markWaste = async (h: (typeof loose)[number]) => {
+    const r = await registerUsage(project.id, {
       materialId: h.lot.materialId,
       materialName: h.lot.materialName,
       unit: h.lot.unit,
@@ -158,8 +159,8 @@ export function CloseDialog({ project, open, onOpenChange }: { project: Project;
             <>
               <Button variant="outline" onClick={() => setStep(0)}>Atrás</Button>
               <Button
-                onClick={() => {
-                  const r = closeProject(project.id);
+                onClick={async () => {
+                  const r = await closeProject(project.id);
                   if (r.ok) onOpenChange(false);
                   else setError(r.error);
                 }}

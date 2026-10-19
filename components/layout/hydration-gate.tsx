@@ -38,6 +38,26 @@ export function HydrationGate({ children }: { children: React.ReactNode }) {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      void useAppStore.getState().refreshWorkspace().catch(() => {
+        useAppStore.setState({ syncStatus: "error", syncError: "No pudimos actualizar los datos. Revisá la conexión y reintentá." });
+      });
+    };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    const timer = window.setInterval(refresh, 30000);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+      window.clearInterval(timer);
+    };
+  }, [state.status]);
+
   if (state.status === "error") {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
@@ -85,7 +105,7 @@ function SyncToast() {
       <div role="alert" className="fixed bottom-4 left-1/2 z-[60] flex w-[min(92vw,32rem)] -translate-x-1/2 items-start gap-3 rounded-lg bg-red-700 px-4 py-3 text-sm text-white shadow-lg">
         <span className="flex-1">{error}</span>
         <button type="button" onClick={dismiss} className="font-medium underline underline-offset-2">
-          Cerrar
+          Actualizar
         </button>
       </div>
     );

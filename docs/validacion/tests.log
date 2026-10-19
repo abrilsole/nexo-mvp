@@ -1,0 +1,17 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> nexo@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.1 /workspace/scratch/886fc3b06fd1/nexo-mvp-main
+
+
+ Test Files  39 passed (39)
+      Tests  490 passed (490)
+   Start at  17:33:22
+   Duration  7.57s (tests 70%, transform 13%, import 12%, environment 4%)
+
+    Isolate  39 workers spawned · ~201ms startup each (spawn + environment, per file)
+             at least ~918ms faster with isolate: false — reuses workers across files instead of one per file
+

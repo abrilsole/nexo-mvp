@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useWatch } from "react-hook-form";
@@ -42,7 +43,7 @@ export function NewProjectWizard() {
   const { overtimeMultiplier, financialPct, hoursPerDay } = useAppStore((s) => s.costSettings);
   const rates = useAppStore((s) => s.hourRates);
   const isDemo = useAppStore((s) => s.isDemo);
-  const createProject = useAppStore((s) => s.createProject);
+  const createProject = useConfirmedAction("createProject");
   const code = useMemo(() => nextProjectCode(projects), [projects]);
   const [draft] = useState(peekQuoteDraft);
   const [step, setStep] = useState(0);
@@ -94,14 +95,14 @@ export function NewProjectWizard() {
     setStep(2);
   };
 
-  const submit = () => {
+  const submit = async () => {
     const blocker = quoteActionBlocker(calc, salesPrice);
     if (blocker) {
       setPriceError(blocker);
       return setStep(1);
     }
     const v = getValues();
-    const res = createProject({ ...v, salesPrice: Number(v.salesPrice), code, budgetLines: calc.lines });
+    const res = await createProject({ ...v, salesPrice: Number(v.salesPrice), code, budgetLines: calc.lines });
     if (!res.ok) return setFormError(res.error);
     clearQuoteDraft();
     router.push(`/projects/${res.value}`);

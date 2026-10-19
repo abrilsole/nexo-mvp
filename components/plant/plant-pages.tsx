@@ -1,5 +1,6 @@
 "use client";
 // Jefe de planta: Resumen, Proyectos, Operarios y Alertas. Sin importes: ni costos, ni precios, ni rentabilidad.
+import { HoursReviews } from "./hours-review";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AlertTriangle, CalendarClock, CalendarDays, ClipboardList, UsersRound } from "lucide-react";
@@ -176,6 +177,7 @@ export function PlantAlertsPage() {
   const alerts = usePlantAlerts();
   return (
     <div className="space-y-4">
+      <HoursReviews />
       <PageHeader title="Alertas de planta" subtitle="Desvío de horas, operarios sobrecargados y rubros sin asignar a pocos días de la entrega." />
       {alerts.length === 0 ? (
         <EmptyState icon={AlertTriangle} title="Sin alertas de planta" description="Cuando haya desvíos de horas o falte asignar a alguien, aparece acá." />

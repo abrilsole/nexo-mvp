@@ -1,12 +1,14 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 // "Mi día" del Operario (Lote 6): lo mínimo posible, pensado para el celular.
 // Solo lo asignado a esa persona para HOY: proyecto, producto, rubro y horas estimadas de la tarea,
 // con un único campo de horas y "Guardar". Sin plata, sin otros proyectos, sin unidades y sin alertas.
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { APP_NAME } from "@/lib/constants";
 import { formatDate, formatNumber, todayISO } from "@/lib/formatting";
+import { createId } from "@/lib/activity";
 import { myDay, type MyDayItem } from "@/lib/my-day";
 import { activeOperators, operatorAccessForUser } from "@/lib/operators";
 import { checkHours } from "@/lib/project-rules";
@@ -81,12 +83,7 @@ export function WorkshopHome() {
               day.items.map((item) => <AssignmentCard key={item.assignment.id} item={item} onSaved={setSaved} />)
             )}
           </section>
-          {day.items.length > 0 && (
-            <p className="mt-6 text-center text-xs text-slate-500">
-              ¿Usaste material o tuviste un problema?{" "}
-              <Link href={`/taller/${day.items[0].project.id}`} className="text-blue-700 underline">Avisalo acá</Link>
-            </p>
-          )}
+
         </>
       )}
 
@@ -101,23 +98,28 @@ export function WorkshopHome() {
 
 /** Una asignación de hoy: proyecto, producto, rubro y horas estimadas; un solo campo de horas y Guardar. */
 function AssignmentCard({ item, onSaved }: { item: MyDayItem; onSaved: (msg: string) => void }) {
-  const logHours = useAppStore((s) => s.logHours);
+  const logHours = useConfirmedAction("logHours");
   const hoursPerDay = useAppStore((s) => s.costSettings.hoursPerDay);
   const projects = useAppStore((s) => s.projects);
   const [hours, setHours] = useState("");
   const [warn, setWarn] = useState("");
   const [error, setError] = useState("");
+  const requestId = useRef<string | null>(null);
+  const busy = useAppStore((s) => s.syncStatus === "saving");
   const a = item.assignment;
   const id = `h-${a.id}`;
 
-  const submit = (confirmed: boolean) => {
+  const submit = async (confirmed: boolean) => {
     const h = parseDecimal(hours);
     // Misma regla que la base: más de 0 y hasta 24 por persona y día; pasar la jornada es un aviso.
     const check = checkHours(projects.flatMap((p) => p.actualEntries), a.operatorId, a.date, h, todayISO(), hoursPerDay);
     if (check.level === "block") return setError(check.message ?? "Horas inválidas.");
     if (check.level === "warn" && !confirmed) return setWarn(check.message ?? "");
-    const r = logHours(item.project.id, { assignmentId: a.id, hours: h, confirmHighHours: true });
+    requestId.current ??= createId("act");
+    const r = await logHours(item.project.id, { requestId: requestId.current, assignmentId: a.id, hours: h, confirmHighHours: true });
     if (!r.ok) return setError(r.error);
+    requestId.current = null;
+    setHours("");
     setWarn("");
     setError("");
     onSaved(`Guardamos ${formatNumber(h)} h en ${item.item?.name ?? item.project.name} · ${rubroLabel(a.rubro)}.`);
@@ -128,13 +130,13 @@ function AssignmentCard({ item, onSaved }: { item: MyDayItem; onSaved: (msg: str
       <div className="text-xs font-medium text-slate-500">{item.project.code} · {item.project.name}</div>
       <div className="mt-0.5 break-words text-lg font-semibold text-slate-900">{item.item?.name ?? "Producto"}</div>
       <div className="text-sm text-slate-600">
-        {rubroLabel(a.rubro)} · estimadas <strong className="tabular">{formatNumber(a.plannedHours)} h</strong>
+        {a.hourKind === "design" ? "Diseño" : a.hourKind === "admin" ? "Administración" : rubroLabel(a.rubro)} · estimadas <strong className="tabular">{formatNumber(a.plannedHours)} h</strong>
       </div>
-      {item.done ? (
+      {item.logged > 0 && (
         <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-emerald-700">
           <CheckCircle2 className="size-4" aria-hidden /> Cargaste {formatNumber(item.logged)} h
         </p>
-      ) : (
+      )}
         <form
           noValidate
           className="mt-3 flex items-end gap-2"
@@ -144,12 +146,12 @@ function AssignmentCard({ item, onSaved }: { item: MyDayItem; onSaved: (msg: str
           }}
         >
           <div className="w-32">
-            <label htmlFor={id} className="mb-1 block text-xs font-medium text-slate-600">Horas trabajadas</label>
+            <label htmlFor={id} className="mb-1 block text-xs font-medium text-slate-600">{item.logged > 0 ? "Agregar horas" : "Horas trabajadas"}</label>
             <Input id={id} inputMode="decimal" value={hours} onChange={(e) => setHours(e.target.value)} aria-invalid={!!error} />
           </div>
-          <Button type="submit" size="lg" className="flex-1">Guardar</Button>
+          <Button type="submit" size="lg" className="flex-1" disabled={busy}>{busy ? "Guardando…" : "Guardar"}</Button>
         </form>
-      )}
+      <Link href={`/taller/${item.project.id}`} className="mt-3 block text-xs text-blue-700 underline">Materiales o incidencias de este proyecto</Link>
       {error && <p role="alert" className="mt-2 text-sm text-red-600">{error}</p>}
       {warn && !error && (
         <div role="alert" className="mt-2 space-y-2 rounded-md bg-amber-50 p-3 text-sm text-amber-900">

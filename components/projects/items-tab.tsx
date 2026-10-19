@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import type { ProductRubro, Project, ProjectItem, RubroId } from "@/types";
@@ -7,7 +8,6 @@ import { itemHours, productStatus, type ProductInput } from "@/lib/production";
 import { RUBROS, rubroLabel } from "@/lib/rubros";
 import { parseDecimal } from "@/lib/schemas";
 import { ProductionBadge } from "@/components/shared/badges";
-import { useAppStore } from "@/store/use-app-store";
 import { useIdentity } from "@/store/selectors";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import { AttachButton, AttachmentList } from "@/components/shared/attachments";
  * Los materiales, horas, archivos y costos se pueden asociar a cada producto.
  */
 export function ItemsTab({ project }: { project: Project }) {
-  const removeItem = useAppStore((s) => s.removeItem);
+  const removeItem = useConfirmedAction("removeItem");
   const { isManager } = useIdentity();
   const [editing, setEditing] = useState<string | null>(null);
   const editable = isManager && !project.isClosed;
@@ -70,7 +70,7 @@ export function ItemsTab({ project }: { project: Project }) {
               {editable && (
                 <div className="flex gap-1">
                   <Button size="icon" variant="ghost" aria-label={`Editar ${it.name}`} onClick={() => setEditing(editing === it.id ? null : it.id)}><Pencil /></Button>
-                  <Button size="icon" variant="ghost" aria-label={`Quitar ${it.name}`} onClick={() => removeItem(project.id, it.id)}><Trash2 /></Button>
+                  <Button size="icon" variant="ghost" aria-label={`Quitar ${it.name}`} onClick={async () => await removeItem(project.id, it.id)}><Trash2 /></Button>
                 </div>
               )}
             </CardHeader>
@@ -131,8 +131,8 @@ const draftOf = (r: ProductRubro): RubroDraft => ({ rubro: r.rubro, hours: Strin
 
 /** Alta o edición de un producto con sus rubros (horas estimadas y operarios pedidos). */
 function ProductForm({ project, item, onDone }: { project: Project; item?: ProjectItem; onDone: () => void }) {
-  const addItem = useAppStore((s) => s.addItem);
-  const updateItem = useAppStore((s) => s.updateItem);
+  const addItem = useConfirmedAction("addItem");
+  const updateItem = useConfirmedAction("updateItem");
   const [name, setName] = useState(item?.name ?? "");
   const [qty, setQty] = useState(String(item?.quantity ?? 1));
   const [description, setDescription] = useState(item?.description ?? "");
@@ -141,7 +141,7 @@ function ProductForm({ project, item, onDone }: { project: Project; item?: Proje
   const key = item?.id ?? "new";
   const setRow = (i: number, patch: Partial<RubroDraft>) => setRubros(rubros.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const input: ProductInput = {
       name,
@@ -149,7 +149,7 @@ function ProductForm({ project, item, onDone }: { project: Project; item?: Proje
       description: description.trim() || undefined,
       rubros: rubros.map((r) => ({ rubro: r.rubro, hours: parseDecimal(r.hours), workers: Number(r.workers) })),
     };
-    const r = item ? updateItem(project.id, item.id, input) : addItem(project.id, input);
+    const r = item ? await updateItem(project.id, item.id, input) : await addItem(project.id, input);
     if (!r.ok) return setError(r.error);
     setError("");
     if (!item) {

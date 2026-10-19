@@ -83,8 +83,8 @@ describe("proyecto sin operario asignado", () => {
     const staffed = assignOperators(projects[0], ["op-ana"], operators, ctx);
     expect(projectAlerts(staffed, S, TODAY).some((x) => x.kind === "staffing")).toBe(false);
   });
-  it("no aplica a Cotización ni Aprobado (todavía no se trabaja en Taller)", () => {
-    expect(projectAlerts(project({ status: "approved" }), S, TODAY).some((x) => x.kind === "staffing")).toBe(false);
+  it("Aprobado admite trabajo y avisa si falta asignar un operario", () => {
+    expect(projectAlerts(project({ status: "approved" }), S, TODAY).some((x) => x.kind === "staffing")).toBe(true);
   });
 });
 

@@ -62,6 +62,7 @@ export function productNeeds(project: Pick<Project, "id" | "items">): RubroNeed[
 // ── Asignaciones y carga por día ──────────────────────────────
 
 export interface AssignmentInput {
+  hourKind?: "labor" | "design" | "admin";
   projectId: string;
   /** Producto del proyecto. */
   itemId: string;

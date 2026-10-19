@@ -177,12 +177,12 @@ describe("Mi día del operario", () => {
       ["P-1058", "Silla apilable", "carpinteria_madera", 8, false],
     ]);
   });
-  it("cargar horas marca la tarea como hecha y suma al total del día", () => {
+  it("una carga parcial suma al día sin completar la asignación", () => {
     const item = myDay(seed.projects, seed.assignments, "op-juan", TODAY).items[0];
     const juan: ops.Ctx = { ...ctx, role: "operator", operatorId: "op-juan", actor: "Juan Pérez" };
     const after = ops.logHours(item.project, seed.operators, seed.assignments, { assignmentId: item.assignment.id, hours: 7.5 }, DEFAULT_SETTINGS, juan);
     const day = myDay(seed.projects.map((p) => (p.id === after.id ? after : p)), seed.assignments, "op-juan", TODAY);
-    expect(day.items[0]).toMatchObject({ logged: 7.5, done: true });
+    expect(day.items[0]).toMatchObject({ logged: 7.5, done: false });
     expect(day.total).toBe(7.5);
   });
 });

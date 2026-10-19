@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { Project } from "@/types";
@@ -6,7 +7,6 @@ import { CATEGORY_LABELS } from "@/lib/constants";
 import { actualInputCategory, type ActualInput } from "@/lib/project-operations";
 import { otherCostSchema, type OtherCostValues } from "@/lib/schemas";
 import { todayISO } from "@/lib/formatting";
-import { useAppStore } from "@/store/use-app-store";
 import { Field } from "@/components/ui/field";
 import { Input, Textarea } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -14,15 +14,15 @@ import { DialogFooter } from "@/components/ui/dialog";
 
 /** Costo real que no es material ni horas. `cost` dice el tipo y, para Diseño / Administración / Gasto financiero, la categoría. */
 export function OtherCostForm({ project, cost, onDone }: { project: Project; cost: Pick<ActualInput, "type" | "category">; onDone: () => void }) {
-  const addActualEntry = useAppStore((s) => s.addActualEntry);
+  const addActualEntry = useConfirmedAction("addActualEntry");
   const { register, handleSubmit, setError, formState } = useForm<OtherCostValues>({
     resolver: zodResolver(otherCostSchema),
     defaultValues: { supplier: "", description: "", date: todayISO(), notes: "" },
   });
   const e = formState.errors;
   const category = actualInputCategory(cost);
-  const submit = (v: OtherCostValues) => {
-    const res = addActualEntry(project.id, {
+  const submit = async (v: OtherCostValues) => {
+    const res = await addActualEntry(project.id, {
       ...cost,
       description: v.description,
       amount: v.amount,

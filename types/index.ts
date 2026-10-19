@@ -274,6 +274,7 @@ export interface ActualEntry {
  * se prevén. Sin importes.
  */
 export interface WorkAssignment {
+  hourKind?: "labor" | "design" | "admin";
   id: string;
   projectId: string;
   /** Producto del proyecto (Lote 6). Solo las asignaciones anteriores pueden no tenerlo. */

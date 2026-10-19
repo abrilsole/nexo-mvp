@@ -51,9 +51,9 @@ describe("calendario operarios × días", () => {
     // El domingo nadie trabaja (gris).
     expect(cells.filter((c) => c.dataset.state === "off").length).toBeGreaterThanOrEqual(seed.operators.length);
     // Diego no viene el día de su excepción y tenía 8 h: rojo (si cae en esta semana).
-    const diego = seed.dayExceptions.find((x) => x.operatorId === "op-diego")!;
+    const diego = seed.dayExceptions.find((x) => x.operatorId === "op-diego" && !x.works)!;
     const week = Array.from({ length: 7 }, (_, i) => addDays(today, i - ((new Date(`${today}T12:00:00`).getDay() + 6) % 7)));
-    if (week.includes(diego.date)) expect(cells.some((c) => c.dataset.state === "over" && c.getAttribute("aria-label")?.startsWith("Diego Sosa"))).toBe(true);
+    if (week.includes(diego.date) && seed.assignments.some(a=>a.operatorId === "op-diego" && a.date === diego.date)) expect(cells.some((c) => c.dataset.state === "over" && c.getAttribute("aria-label")?.startsWith("Diego Sosa"))).toBe(true);
   });
 });
 

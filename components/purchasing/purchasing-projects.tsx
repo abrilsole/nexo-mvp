@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 // Compras → Necesidades (Lote 6): los materiales de los proyectos aprobados con lo que falta pedir, neteando el stock
 // libre del depósito. Estado por material: Por comprar / En orden de compra / Recibido (se deriva de las órdenes).
 // Se eligen varios ítems (de uno o varios proyectos) y se genera una orden de compra. Sin precio de venta ni mano de obra.
@@ -143,7 +144,7 @@ function OrderDialog({ needs, onClose, onDone }: { needs: MaterialNeed[] | null;
 function OrderForm({ needs, onClose, onDone }: { needs: MaterialNeed[]; onClose: () => void; onDone: () => void }) {
   const projects = useAppStore((s) => s.projects);
   const stock = useAppStore((s) => s.stock);
-  const saveOrder = useAppStore((s) => s.saveOrder);
+  const saveOrder = useConfirmedAction("saveOrder");
   const prices = useMemo(() => supplierPrices(purchaseHistory(projects, stock)), [projects, stock]);
   const suggested = prices.find((m) => m.key === needs[0]?.key)?.suppliers[0]?.supplier ?? "";
   const [supplier, setSupplier] = useState(suggested);
@@ -153,9 +154,9 @@ function OrderForm({ needs, onClose, onDone }: { needs: MaterialNeed[]; onClose:
   const [error, setError] = useState("");
   const total = needs.reduce((s, _, i) => s + (parseDecimal(rows[i].qty) || 0) * (parseDecimal(rows[i].cost) || 0), 0);
 
-  const save = (e: React.FormEvent) => {
+  const save = async (e: React.FormEvent) => {
     e.preventDefault();
-    const r = saveOrder({
+    const r = await saveOrder({
       supplier,
       date,
       notes,

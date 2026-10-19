@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { Boxes, Plus } from "lucide-react";
@@ -68,8 +69,8 @@ export function StockPage({ material, lot, tab, basePath = "/stock" }: { materia
   const stock = useAppStore((s) => s.stock);
   const projects = useAppStore((s) => s.projects);
   const requests = useAppStore((s) => s.requests);
-  const setRequestStatus = useAppStore((s) => s.setRequestStatus);
-  const updateLotLocation = useAppStore((s) => s.updateLotLocation);
+  const setRequestStatus = useConfirmedAction("setRequestStatus");
+  const updateLotLocation = useConfirmedAction("updateLotLocation");
   // Compras ve el stock en modo solo consulta (también en la base): solo el Administrativo lo edita.
   const { isManager: canManage, roleKey } = useIdentity();
   const projectLink = (id: string, tabName?: string) => projectHref(roleKey, id, tabName);
@@ -93,9 +94,9 @@ export function StockPage({ material, lot, tab, basePath = "/stock" }: { materia
       .map((l) => ({ lot: l, bal: balances.get(l.id) }))
       .filter((x) => x.bal && x.bal.warehouse + Object.values(x.bal.held).reduce((s, q) => s + q, 0) > EPS);
 
-  const editLocation = (l: StockLot) => {
+  const editLocation = async (l: StockLot) => {
     const next = window.prompt("Ubicación del material", l.location ?? "");
-    if (next !== null) updateLotLocation(l.id, next.trim());
+    if (next !== null) await updateLotLocation(l.id, next.trim());
   };
 
   return (
@@ -316,8 +317,8 @@ export function StockPage({ material, lot, tab, basePath = "/stock" }: { materia
                       <TD>
                         {canManage && r.status === "open" && (
                           <div className="flex gap-1.5">
-                            <Button size="sm" variant="outline" onClick={() => setRequestStatus(r.id, "resolved")}>Resuelto</Button>
-                            <Button size="sm" variant="ghost" onClick={() => setRequestStatus(r.id, "cancelled")}>Cancelar</Button>
+                            <Button size="sm" variant="outline" onClick={async () => await setRequestStatus(r.id, "resolved")}>Resuelto</Button>
+                            <Button size="sm" variant="ghost" onClick={async () => await setRequestStatus(r.id, "cancelled")}>Cancelar</Button>
                           </div>
                         )}
                       </TD>

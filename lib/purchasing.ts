@@ -215,15 +215,23 @@ export function materialCosts(
       total: e.total,
     };
   };
-  const rows = project.budgetLines
-    .filter((l) => l.category === "materials")
-    .map((l): MaterialCostRow => {
+  const materialLines = project.budgetLines.filter(l=>l.category === "materials");
+  const byLine = new Map(orders.flatMap(o=>o.lines.map(l=>[orderEntryId(l),l] as const)));
+  const rows = materialLines.map((l): MaterialCostRow => {
       const key = materialKey(l.materialId, l.description);
-      const sources = project.purchaseEntries.filter((e) => materialKey(e.materialId, e.materialName) === key).map(sourceOf);
+      const sources = project.purchaseEntries.filter((e) => {
+        const line = byLine.get(e.id);
+        if (line) return line.projectId === project.id && line.budgetLineId === l.id;
+        // Compra directa sin línea: mostrar una sola vez, junto a la primera línea del material.
+        return materialKey(e.materialId,e.materialName) === key && materialLines.find(x=>materialKey(x.materialId,x.description) === key)?.id === l.id;
+      }).map(sourceOf);
       const real = round2(sources.reduce((s, x) => s + x.total, 0));
       return { lineId: l.id, description: l.description, unit: l.unit, estimatedQuantity: l.quantity, estimatedUnitCost: l.unitCost, estimated: l.total, real, diff: round2(real - l.total), sources };
     });
   const estimated = round2(rows.reduce((s, r) => s + r.estimated, 0));
+  const linked = new Set(rows.flatMap(r=>r.sources.map(x=>x.entryId)));
+  const unmatched = project.purchaseEntries.filter(e=>!linked.has(e.id));
+  for (const e of unmatched) rows.push({ lineId:`purchase:${e.id}`,description:`${e.materialName} (sin línea presupuestada)`,unit:e.unit,estimatedQuantity:null,estimatedUnitCost:0,estimated:0,real:e.total,diff:e.total,sources:[sourceOf(e)] });
   const real = round2(rows.reduce((s, r) => s + r.real, 0));
   // La diferencia se mide solo en lo ya facturado: comparar contra el estimado de lo que falta facturar engañaría.
   const billed = rows.filter((r) => r.real > 0);

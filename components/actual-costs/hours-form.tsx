@@ -1,5 +1,7 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useConfirmedAction } from "@/store/confirmed-action";
+import { useMemo, useRef, useState } from "react";
+import { createId } from "@/lib/activity";
 import type { Project, RubroId } from "@/types";
 import { HOURS_MAX_PER_DAY, checkHours } from "@/lib/project-rules";
 import { parseDecimal } from "@/lib/schemas";
@@ -20,8 +22,9 @@ import { cn } from "@/lib/utils";
 export function HoursForm({ project, onDone }: { project: Project; onDone: (summary: string) => void }) {
   const identity = useIdentity();
   const hoursPerDay = useAppStore((s) => s.costSettings.hoursPerDay);
+  const projects = useAppStore((s) => s.projects);
   const operators = useAppStore((s) => s.operators);
-  const logHoursManual = useAppStore((s) => s.logHoursManual);
+  const logHoursManual = useConfirmedAction("logHoursManual");
 
   const choices = useMemo(
     () =>
@@ -40,19 +43,22 @@ export function HoursForm({ project, onDone }: { project: Project; onDone: (summ
   const [comment, setComment] = useState("");
   const [confirmHigh, setConfirmHigh] = useState(false);
   const [error, setError] = useState("");
+  const requestId = useRef<string | null>(null);
 
   const isOperator = identity.role === "operator";
   const operator = isOperator ? identity.operator : operators.find((o) => o.id === pickedOperator);
   const hoursN = parseDecimal(hours || "0");
-  const check = operator && Number.isFinite(hoursN) && hoursN > 0 ? checkHours(project.actualEntries, operator.id, date, hoursN, todayISO(), hoursPerDay) : null;
+  const check = operator && Number.isFinite(hoursN) && hoursN > 0 ? checkHours(projects.flatMap(p=>p.actualEntries), operator.id, date, hoursN, todayISO(), hoursPerDay) : null;
 
-  const submit = () => {
+  const submit = async () => {
     if (!operator) return setError(isOperator ? "Tu usuario no está vinculado a un operario." : "Elegí el operario.");
     if (!item || !chosenRubro) return setError("Elegí el producto y el rubro.");
     if (!Number.isFinite(hoursN) || hoursN <= 0) return setError("Indicá las horas trabajadas.");
     if (check?.level === "block") return setError(check.message ?? "Horas inválidas.");
     if (check?.level === "warn" && !confirmHigh) return setError("Confirmá que las horas son correctas.");
-    const res = logHoursManual(project.id, {
+    requestId.current ??= createId("act");
+    const res = await logHoursManual(project.id, {
+      requestId: requestId.current,
       operatorId: operator.id,
       itemId: item.id,
       rubro: chosenRubro,
@@ -62,6 +68,7 @@ export function HoursForm({ project, onDone }: { project: Project; onDone: (summ
       confirmHighHours: confirmHigh,
     });
     if (!res.ok) return setError(res.error);
+    requestId.current = null;
     onDone(`${formatNumber(hoursN, 1)} h de ${item.name} · ${rubroLabel(chosenRubro)} · ${operator.name}`);
   };
 

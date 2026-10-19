@@ -18,6 +18,7 @@ export interface Member {
   /** Persona de Operarios vinculada (solo Operario). */
   operatorId?: string;
   isSelf: boolean;
+  canViewCommercial?: boolean;
 }
 
 export interface Invitation {
@@ -75,6 +76,7 @@ export function membersFromJson(json: { members?: Record<string, unknown>[]; inv
       createdAt: String(m.created_at),
       operatorId: str(m.operator_id),
       isSelf: Boolean(m.is_self),
+      canViewCommercial: Boolean(m.can_view_commercial),
     })),
     invitations: (json.invitations ?? []).map((i) => ({
       id: String(i.id),

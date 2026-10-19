@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useMemo, useState } from "react";
 import type { Project } from "@/types";
 import { parseDims, dimFieldsForUnit, type DimsDraft } from "@/lib/material-kinds";
@@ -72,10 +73,10 @@ export function StockActionDialog({
   onOpenChange: (o: boolean) => void;
 }) {
   const projects = useAppStore((s) => s.projects);
-  const assignStock = useAppStore((s) => s.assignStock);
-  const releaseStock = useAppStore((s) => s.releaseStock);
-  const transferStock = useAppStore((s) => s.transferStock);
-  const markLeftover = useAppStore((s) => s.markLeftover);
+  const assignStock = useConfirmedAction("assignStock");
+  const releaseStock = useConfirmedAction("releaseStock");
+  const transferStock = useConfirmedAction("transferStock");
+  const markLeftover = useConfirmedAction("markLeftover");
   const returnToSupplier = useAppStore((s) => s.returnStockToSupplier);
 
   const [qty, setQty] = useState("");
@@ -89,7 +90,7 @@ export function StockActionDialog({
   const copy = COPY[action];
   const needsProject = action === "assign" || action === "transfer" || (action === "leftover" && dest === "project");
 
-  const submit = () => {
+  const submit = async () => {
     const quantity = parseDecimal(qty || "0");
     if (!Number.isFinite(quantity) || quantity <= 0) return setError("Indicá cuánto material.");
     if (quantity - target.max > 1e-6) return setError(`Como máximo podés mover ${formatQty(target.max, target.unit)}.`);
@@ -102,14 +103,14 @@ export function StockActionDialog({
       lotId: target.lotId,
     };
     let res;
-    if (action === "assign") res = assignStock({ ...base, projectId: toProject });
-    else if (action === "release") res = releaseStock({ ...base, projectId: target.fromProjectId ?? "" });
-    else if (action === "transfer") res = transferStock({ ...base, fromProjectId: target.fromProjectId ?? "", toProjectId: toProject });
+    if (action === "assign") res = await assignStock({ ...base, projectId: toProject });
+    else if (action === "release") res = await releaseStock({ ...base, projectId: target.fromProjectId ?? "" });
+    else if (action === "transfer") res = await transferStock({ ...base, fromProjectId: target.fromProjectId ?? "", toProjectId: toProject });
     else if (action === "supplier") res = returnToSupplier({ ...base, projectId: target.fromProjectId ?? "" });
     else {
       const parsed = parseDims(dimFieldsForUnit(target.unit), dims);
       if (parsed.error) return setError(parsed.error);
-      res = markLeftover({
+      res = await markLeftover({
         ...base,
         projectId: target.fromProjectId ?? "",
         dims: parsed.dims,

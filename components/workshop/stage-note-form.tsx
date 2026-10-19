@@ -1,9 +1,9 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useState } from "react";
 import type { Project, StageKey } from "@/types";
 import { STATUS_LABELS } from "@/lib/constants";
 import { todayISO } from "@/lib/formatting";
-import { useAppStore } from "@/store/use-app-store";
 import { useIdentity } from "@/store/selectors";
 import { Button } from "@/components/ui/button";
 import { Choice } from "@/components/ui/choice";
@@ -14,15 +14,15 @@ const isStage = (s: string): s is StageKey => s === "purchasing" || s === "produ
 
 /** Nota o incidencia de la etapa actual, con foto opcional. */
 export function StageNoteForm({ project, onDone }: { project: Project; onDone: (s: string) => void }) {
-  const addStageLog = useAppStore((s) => s.addStageLog);
+  const addStageLog = useConfirmedAction("addStageLog");
   const { actor } = useIdentity();
   const [kind, setKind] = useState<"note" | "incident">("incident");
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const stage: StageKey = isStage(project.status) ? project.status : "production";
 
-  const submit = () => {
-    const r = addStageLog(project.id, { stage, date: todayISO(), kind, text, responsible: actor });
+  const submit = async () => {
+    const r = await addStageLog(project.id, { stage, date: todayISO(), kind, text, responsible: actor });
     if (!r.ok) return setError(r.error);
     onDone(kind === "incident" ? "Incidencia registrada." : "Nota registrada.");
   };

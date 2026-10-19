@@ -1,0 +1,58 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> nexo@0.1.0 build
+> next build
+
+▲ Next.js 16.3.6 (Turbopack)
+✓ Running next.config.ts took 18ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 797ms
+  Running TypeScript ...
+  Finished TypeScript in 5.2s ...
+  Collecting page data using 8 workers ...
+  Generating static pages using 8 workers (0/30) ...
+  Generating static pages using 8 workers (7/30) 
+  Generating static pages using 8 workers (14/30) 
+  Generating static pages using 8 workers (22/30) 
+✓ Generating static pages using 8 workers (30/30) in 498ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /alerts
+├ ƒ /auth/callback
+├ ƒ /auth/confirm
+├ ƒ /auth/signout
+├ ○ /compras
+├ ○ /compras/alertas
+├ ○ /compras/cotizador
+├ ○ /compras/ordenes
+├ ƒ /compras/proyectos
+├ ƒ /compras/stock
+├ ○ /dashboard
+├ ○ /horas
+├ ƒ /login
+├ ○ /materials
+├ ƒ /operators
+├ ○ /planta
+├ ○ /planta/alertas
+├ ○ /planta/asignaciones
+├ ○ /planta/operarios
+├ ○ /planta/proyectos
+├ ƒ /projects
+├ ƒ /projects/[id]
+├ ○ /projects/new
+├ ○ /quotes
+├ ○ /settings
+├ ƒ /stock
+├ ○ /taller
+└ ƒ /taller/[projectId]
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

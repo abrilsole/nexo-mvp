@@ -2,7 +2,7 @@
 import type { Project } from "@/types";
 import type { ProjectEconomics } from "@/lib/calculations";
 import { remainingBudgetText } from "@/lib/insights";
-import { MARGIN_TOOLTIP } from "@/lib/constants";
+import { MARGIN_TOOLTIP, CATEGORY_LABELS } from "@/lib/constants";
 import { formatCurrency, formatCurrencyOrDash } from "@/lib/formatting";
 import { Card, CardContent } from "@/components/ui/card";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -25,6 +25,7 @@ function Money({ label, value, hint, tooltip }: { label: string; value: string; 
 export function EconomicSummary({ project, econ }: { project: Project; econ: ProjectEconomics }) {
   const completed = project.status === "completed";
   const noData = !completed && !econ.hasExecutionData;
+  const missingCosts = econ.categories.filter(c => c.budget > 0 && c.actual === 0);
   const remaining = remainingBudgetText(project);
   const priceText = econ.hasSalesPrice ? formatCurrency(econ.salesPrice) : "—";
   const noPriceHint = econ.hasSalesPrice ? undefined : "Sin precio de venta: no hay ganancia ni rentabilidad.";
@@ -44,6 +45,7 @@ export function EconomicSummary({ project, econ }: { project: Project; econ: Pro
         ) : (
           <MarginShift from={econ.expectedMargin} to={econ.currentMargin} size="xl" toLabel={completed ? "Real final" : "Proyectada"} />
         )}
+        {missingCosts.length > 0 && <p className="mt-3 rounded-md bg-amber-50 p-3 text-sm text-amber-900">Sin costos registrados en {missingCosts.map(c=>CATEGORY_LABELS[c.category]).join(", ")}. Esto no confirma un costo cero. Revisá las cargas antes de interpretar la rentabilidad{completed ? " final" : ""}.</p>}
         <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Money label="Precio de venta" value={priceText} hint={noPriceHint} />
           <Money label="Costo presupuestado" value={formatCurrency(econ.budgetTotal)} hint={`Ganancia esperada ${formatCurrencyOrDash(econ.expectedProfit)}`} />
@@ -60,7 +62,7 @@ export function EconomicSummary({ project, econ }: { project: Project; econ: Pro
               <Money
                 label="Costo final proyectado"
                 value={formatCurrency(econ.projectedFinalCost)}
-                tooltip="Costo real hasta hoy + lo que falta del costo presupuestado. Por categoría: el mayor entre lo presupuestado y lo registrado."
+                tooltip="Suma el costo registrado y las cantidades presupuestadas pendientes cuando se pueden identificar. Para materiales usa el mayor entre la tarifa presupuestada y la última compra. Nunca baja del presupuesto ni del costo real. No estima trabajos faltantes fuera del presupuesto."
                 hint={`Ganancia proyectada ${formatCurrencyOrDash(econ.projectedProfit)}`}
               />
             </>

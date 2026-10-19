@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 // Días laborales de un operario y sus excepciones por fecha (Lote 6 · Fase 3). Lo edita el Jefe de planta (o un
 // Administrativo); la base lo guarda con planta_save_schedule. Define la capacidad de cada día en el calendario.
 import { useState } from "react";
@@ -27,7 +28,7 @@ function ScheduleForm({ operatorId, onClose }: { operatorId: string; onClose: ()
   const operator = useAppStore((s) => s.operators.find((o) => o.id === operatorId));
   const allExceptions = useAppStore((s) => s.dayExceptions);
   const hoursPerDay = useAppStore((s) => s.costSettings.hoursPerDay);
-  const saveSchedule = useAppStore((s) => s.saveSchedule);
+  const saveSchedule = useConfirmedAction("saveSchedule");
   const today = todayISO();
   const exceptions = allExceptions.filter((x) => x.operatorId === operatorId && x.date >= today);
   const [days, setDays] = useState<number[]>(() => (operator ? workDaysOf(operator) : DEFAULT_WORK_DAYS));
@@ -39,13 +40,13 @@ function ScheduleForm({ operatorId, onClose }: { operatorId: string; onClose: ()
   if (!operator) return null;
 
   const toggle = (d: number) => setDays(days.includes(d) ? days.filter((x) => x !== d) : [...days, d]);
-  const saveDays = () => {
-    const r = saveSchedule(operatorId, { workDays: days });
+  const saveDays = async () => {
+    const r = await saveSchedule(operatorId, { workDays: days });
     if (!r.ok) return setError(r.error);
     setError("");
   };
-  const addException = () => {
-    const r = saveSchedule(operatorId, { add: [{ date, works, hours: works && hours.trim() ? parseDecimal(hours) : undefined, note }] });
+  const addException = async () => {
+    const r = await saveSchedule(operatorId, { add: [{ date, works, hours: works && hours.trim() ? parseDecimal(hours) : undefined, note }] });
     if (!r.ok) return setError(r.error);
     setError("");
     setDate("");
@@ -96,8 +97,8 @@ function ScheduleForm({ operatorId, onClose }: { operatorId: string; onClose: ()
                   size="icon"
                   variant="ghost"
                   aria-label={`Quitar la excepción del ${formatDate(x.date)}`}
-                  onClick={() => {
-                    const r = saveSchedule(operatorId, { remove: [x.date] });
+                  onClick={async () => {
+                    const r = await saveSchedule(operatorId, { remove: [x.date] });
                     if (!r.ok) setError(r.error);
                   }}
                 >

@@ -2,7 +2,8 @@
 // ─────────────────────────────────────────────────────────────
 // Store global (Zustand). Los datos viven en Supabase: el store los carga
 // al entrar (WorkspaceGate), aplica las operaciones puras de lib/ en memoria
-// (la UI sigue siendo síncrona) y encola la escritura de lo que cambió.
+// y encola la escritura de lo que cambió. Las acciones confirmadas esperan
+// la persistencia y reconcilian el estado antes de permitir otra operación.
 // Todas las pantallas leen SIEMPRE de este mismo estado.
 // Sólo el rol elegido en la demo (y el operario simulado) se guarda en localStorage.
 // ─────────────────────────────────────────────────────────────
@@ -64,6 +65,7 @@ export type Result<T = undefined> = { ok: true; value: T } | { ok: false; error:
 export type SyncStatus = "idle" | "saving" | "error";
 
 interface AppState {
+  reviewedHoursKeys: string[];
   projects: Project[];
   /** Asignaciones del Jefe de planta (Lote 5B). */
   assignments: WorkAssignment[];
@@ -104,6 +106,8 @@ interface AppState {
   syncError: string | null;
 
   loadWorkspace: (ws: Workspace) => void;
+  refreshWorkspace: () => Promise<void>;
+  confirmOperation: <T>(operation: () => Result<T> | Promise<Result<T>>) => Promise<Result<T>>;
   setMode: (mode: RoleKey) => void;
   setActingOperator: (id: string | null) => void;
 
@@ -182,7 +186,7 @@ interface AppState {
   /** Recibe Alert.resolutionKey: si el problema persiste, la alerta reaparece. */
   resolveAlert: (alertId: string) => void;
   reopenAlert: (alertId: string) => void;
-  updateSettings: (patch: Partial<AlertSettings>) => void;
+  updateSettings: (patch: Partial<AlertSettings>) => Result;
   /** Un cambio del multiplicador de horas extra vale desde `validFrom` (hoy por defecto). */
   updateCostSettings: (patch: Partial<CostSettings>, validFrom?: string) => Result;
   /**
@@ -221,6 +225,7 @@ function errorMessage(e: unknown): string {
 }
 
 export interface ManualHoursInput {
+  requestId?: string;
   operatorId: string;
   itemId: string;
   rubro: RubroId;
@@ -297,13 +302,30 @@ export const useAppStore = create<AppState>()(
       // Cola de escrituras: se ejecutan en orden para que un proyecto exista antes que sus hijos.
       let queue: Promise<unknown> = Promise.resolve();
       let pending = 0;
+      let revision = 0;
+      let confirming = false;
+      let refreshInFlight: Promise<void> | null = null;
+      const refreshWorkspace = (duringConfirmation = false): Promise<void> => {
+        if (refreshInFlight) return duringConfirmation ? refreshInFlight.then(() => refreshWorkspace(true)) : refreshInFlight;
+        if (!get().organizationId || pending || (confirming && !duringConfirmation)) return Promise.resolve();
+        const start = revision;
+        const org = get().organizationId;
+        refreshInFlight = remote.loadWorkspace(createClient()).then((ws) => {
+          if (start === revision && !pending && (!confirming || duringConfirmation) && org === get().organizationId) get().loadWorkspace(ws);
+        }).finally(() => { refreshInFlight = null; });
+        return refreshInFlight;
+      };
       const persistRemote = (write: (db: ReturnType<typeof createClient>, org: string) => Promise<unknown>) => {
         const org = get().organizationId;
         if (!org) return queue;
+        revision += 1;
         pending += 1;
         set({ syncStatus: "saving" });
         queue = queue
-          .then(() => write(createClient(), org))
+          .then(() => {
+            if (get().syncStatus === "error") throw new Error("Hay un guardado fallido. Actualizá los datos antes de continuar.");
+            return write(createClient(), org);
+          })
           .then(
             () => {
               pending -= 1;
@@ -335,15 +357,7 @@ export const useAppStore = create<AppState>()(
           void persistRemote((db) => remote.runTallerCalls(db, calls));
           return;
         }
-        void persistRemote(async (db, org) => {
-          for (const p of projects) {
-            const before = prev.projects.find((x) => x.id === p.id);
-            if (before !== p) await remote.syncProject(db, org, before, p);
-          }
-          await remote.syncStock(db, org, prev.stock, stock);
-          await remote.syncOperators(db, org, prev.operators, operators);
-          await remote.syncRequests(db, org, prev.requests, requests);
-        });
+        void persistRemote((db, org) => remote.commitChange(db, org, prev, { projects, stock, operators, requests }));
       };
 
       /** Corre una operación y devuelve Result (nunca lanza). */
@@ -424,6 +438,7 @@ export const useAppStore = create<AppState>()(
 
       return {
         ...EMPTY_DATA,
+        reviewedHoursKeys: [],
         dayExceptions: [],
         costSettings: { ...DEFAULT_COST_SETTINGS },
         hourRates: DEFAULT_HOUR_RATES.map((r) => ({ ...r })),
@@ -441,8 +456,35 @@ export const useAppStore = create<AppState>()(
         syncStatus: "idle",
         syncError: null,
 
+        refreshWorkspace,
+        confirmOperation: async (operation) => {
+          if (confirming || pending) return { ok: false, error: "Hay un guardado en curso. Esperá un momento." };
+          if (get().syncStatus === "error") return { ok: false, error: "Actualizá los datos antes de volver a guardar." };
+          confirming = true;
+          revision += 1;
+          set({ syncStatus: "saving" });
+          try {
+            const result = await operation();
+            await queue;
+            const error = get().syncError;
+            if (error) {
+              await refreshWorkspace(true).catch(() => undefined);
+              return { ok: false, error };
+            }
+            set({ syncStatus: "idle" });
+            // Releer también en éxito: costos, IDs y numeración pertenecen al servidor.
+            await refreshWorkspace(true).catch(() => {
+              set({ syncStatus: "error", syncError: "Guardado confirmado. No pudimos actualizar las vistas; actualizá antes de seguir." });
+            });
+            return result;
+          } catch (e) {
+            set({ syncStatus: "error", syncError: "No se pudo verificar el estado guardado. Actualizá antes de reintentar." });
+            return { ok: false, error: errorMessage(e) };
+          } finally { confirming = false; }
+        },
         loadWorkspace: (ws) => {
           set({
+            reviewedHoursKeys: ws.reviewedHoursKeys ?? [],
             projects: ws.projects,
             assignments: ws.assignments,
             orders: ws.orders,
@@ -538,18 +580,38 @@ export const useAppStore = create<AppState>()(
 
         logHours: (id, input) =>
           mutate(id, (p) => {
+            const assignment = get().assignments.find((a) => a.id === input.assignmentId);
+            if (assignment) {
+              const check = checkHours(get().projects.flatMap((p) => p.actualEntries), assignment.operatorId, assignment.date, input.hours, todayISO(), get().costSettings.hoursPerDay);
+              if (check.level === "block") throw new ops.DomainError(check.message);
+            }
             const { priceHistory, costSettings, hourRates } = get();
             const laborRate = hourRates.find((r) => r.id === "labor")?.hourlyRate;
             // La hora se valúa con el costo vigente ESE día (precios con vigencia).
-            const costAt = (op: Operator, date: string) => laborCostAt({ valuation: costSettings.laborValuation, operator: op, laborRate, history: priceHistory, date });
+            const costAt = (op: Operator, date: string) => assignment?.hourKind && assignment.hourKind !== "labor"
+              ? hourRatesAt(hourRates, priceHistory, date).find(r=>r.id === assignment.hourKind)?.hourlyRate ?? 0
+              : laborCostAt({ valuation: costSettings.laborValuation, operator: op, laborRate, history: priceHistory, date });
             return ops.logHours(p, get().operators, get().assignments, { ...input, workdayHours: costSettings.hoursPerDay }, get().settings, ctx(), costAt);
           }),
 
         logHoursManual: (id, input) => {
           if (!isManager(effectiveIdentity(get()).role)) return { ok: false, error: "La carga manual de horas la hace un usuario Administrativo." };
-          const check = checkHours(find(id).actualEntries, input.operatorId, input.date, input.hours, todayISO(), get().costSettings.hoursPerDay);
+          const check = checkHours(get().projects.flatMap((p) => p.actualEntries), input.operatorId, input.date, input.hours, todayISO(), get().costSettings.hoursPerDay);
           if (check.level === "block") return { ok: false, error: check.message ?? "Horas inválidas." };
           if (check.level === "warn" && !input.confirmHighHours) return { ok: false, error: `${check.message} Confirmá para guardarlas.` };
+          if (get().organizationId) {
+            const requestId = input.requestId ?? createId("act");
+            const assignmentId = createId("asg");
+            void persistRemote(async (db) => {
+              const { error } = await db.rpc("admin_log_hours_manual", { p: {
+                id: requestId, assignment: { id: assignmentId, project_id: id, item_id: input.itemId, rubro: input.rubro,
+                  operator_id: input.operatorId, date: input.date, planned_hours: input.hours },
+                hours: input.hours, notes: input.comment,
+              } });
+              if (error) throw new Error(error.message);
+            });
+            return { ok: true, value: undefined };
+          }
           const saved = get().saveAssignment({ projectId: id, itemId: input.itemId, rubro: input.rubro, operatorId: input.operatorId, date: input.date, plannedHours: input.hours });
           if (!saved.ok) return saved;
           return get().logHours(id, { assignmentId: saved.value, hours: input.hours, comment: input.comment, confirmHighHours: input.confirmHighHours });
@@ -732,6 +794,7 @@ export const useAppStore = create<AppState>()(
           const settings = { ...get().settings, ...patch };
           set({ settings });
           void persistRemote((db, org) => remote.saveSettings(db, org, settings));
+          return { ok: true, value: undefined };
         },
 
         updateCostSettings: (patch, validFrom = todayISO()) => {
@@ -779,6 +842,7 @@ export const useAppStore = create<AppState>()(
             const a: WorkAssignment = {
               id: input.id ?? createId("asg"),
               projectId: input.projectId,
+              hourKind: input.hourKind ?? "labor",
               itemId: input.itemId,
               rubro: input.rubro,
               operatorId: input.operatorId,
@@ -928,7 +992,7 @@ export const useAppStore = create<AppState>()(
 
         resetDemo: () => replaceAll(demoData(), true),
         clearData: () => replaceAll({ ...EMPTY_DATA, settings: { ...DEFAULT_SETTINGS } }, false),
-        dismissSyncError: () => set({ syncError: null, syncStatus: "idle" }),
+        dismissSyncError: () => { void refreshWorkspace().catch(() => undefined); },
       };
     },
     {

@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 // Compras: Dashboard, Órdenes de compra (con precios por proveedor) y Alertas. Solo materiales: costo estimado,
 // costo real (factura), proveedor y fechas. Nunca precio de venta, rentabilidad ni valor de la mano de obra.
 import Link from "next/link";
@@ -174,8 +175,8 @@ export function OrdersPage() {
   const orders = allOrders.filter((o) => o.lines.length > 0);
   const projects = useAppStore((s) => s.projects);
   const stock = useAppStore((s) => s.stock);
-  const sendOrder = useAppStore((s) => s.sendOrder);
-  const setOrderPaid = useAppStore((s) => s.setOrderPaid);
+  const sendOrder = useConfirmedAction("sendOrder");
+  const setOrderPaid = useConfirmedAction("setOrderPaid");
   const [action, setAction] = useState<Action>(null);
   const [error, setError] = useState("");
   const history = useMemo(() => purchaseHistory(projects, stock), [projects, stock]);
@@ -228,7 +229,7 @@ export function OrdersPage() {
                     </ul>
                     <div className="flex flex-wrap gap-2">
                       {o.status === "draft" && (
-                        <Button size="sm" onClick={() => run(sendOrder(o.id))}>
+                        <Button size="sm" onClick={async () => run(await sendOrder(o.id))}>
                           <Send /> Marcar como enviada
                         </Button>
                       )}
@@ -238,7 +239,7 @@ export function OrdersPage() {
                         </Button>
                       )}
                       {o.status === "invoiced" && (
-                        <Button size="sm" variant="outline" onClick={() => run(setOrderPaid(o.id, !o.paid))}>
+                        <Button size="sm" variant="outline" onClick={async () => run(await setOrderPaid(o.id, !o.paid))}>
                           {o.paid ? "Marcar como no pagada" : "Marcar como pagada"}
                         </Button>
                       )}
@@ -299,7 +300,7 @@ export function OrdersPage() {
 }
 
 function InvoiceDialog({ order, onClose }: { order: PurchaseOrder | null; onClose: () => void }) {
-  const invoiceOrder = useAppStore((s) => s.invoiceOrder);
+  const invoiceOrder = useConfirmedAction("invoiceOrder");
   const [number, setNumber] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(todayISO());
@@ -311,9 +312,9 @@ function InvoiceDialog({ order, onClose }: { order: PurchaseOrder | null; onClos
           <form
             noValidate
             className="space-y-4"
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
-              const r = invoiceOrder(order.id, { invoiceNumber: number, invoiceAmount: parseDecimal(amount || String(orderTotal(order))), invoiceDate: date });
+              const r = await invoiceOrder(order.id, { invoiceNumber: number, invoiceAmount: parseDecimal(amount || String(orderTotal(order))), invoiceDate: date });
               if (!r.ok) return setError(r.error);
               setNumber("");
               setAmount("");
@@ -322,7 +323,7 @@ function InvoiceDialog({ order, onClose }: { order: PurchaseOrder | null; onClos
           >
             <DialogHeader>
               <DialogTitle>Factura de {order.number}</DialogTitle>
-              <DialogDescription>Al registrarla, el costo real de materiales de cada proyecto pasa a ser el de esta orden ({formatCurrency(orderTotal(order))}).</DialogDescription>
+              <DialogDescription>Registra el importe comprado por proyecto. El costo imputable se registra al consumir o desperdiciar material. Total de líneas ({formatCurrency(orderTotal(order))}).</DialogDescription>
             </DialogHeader>
             <div className="grid grid-cols-3 gap-3">
               <Field label="N° de factura" htmlFor="inv-n">
@@ -335,6 +336,7 @@ function InvoiceDialog({ order, onClose }: { order: PurchaseOrder | null; onClos
                 <Input id="inv-d" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
               </Field>
             </div>
+            {amount && Math.abs(parseDecimal(amount) - orderTotal(order)) > .01 && <p role="alert" className="text-sm text-amber-800">La factura difiere de las líneas en {formatCurrency(parseDecimal(amount)-orderTotal(order))}. La diferencia queda sin distribuir: no cambia el costo del material. Revisá impuestos, fletes y descuentos; registrá un costo adicional solo si corresponde.</p>}
             {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
             <DialogFooter className="gap-2">
               <Button type="button" variant="outline" onClick={onClose}>Cancelar</Button>
@@ -356,7 +358,7 @@ function ReceiveDialog({ order, onClose }: { order: PurchaseOrder | null; onClos
 }
 
 function ReceiveForm({ order, onClose }: { order: PurchaseOrder; onClose: () => void }) {
-  const receiveOrder = useAppStore((s) => s.receiveOrder);
+  const receiveOrder = useConfirmedAction("receiveOrder");
   const projects = useAppStore((s) => s.projects);
   const [qty, setQty] = useState<Record<string, string>>(() => Object.fromEntries(order.lines.map((l) => [l.id, String(Math.max(0, l.quantity - l.receivedQuantity)).replace(".", ",")])));
   const [error, setError] = useState("");
@@ -364,9 +366,9 @@ function ReceiveForm({ order, onClose }: { order: PurchaseOrder; onClose: () => 
     <form
       noValidate
       className="space-y-4"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        const r = receiveOrder(order.id, order.lines.map((l) => ({ lineId: l.id, quantity: parseDecimal(qty[l.id] ?? "") || 0 })));
+        const r = await receiveOrder(order.id, order.lines.map((l) => ({ lineId: l.id, quantity: parseDecimal(qty[l.id] ?? "") || 0 })));
         if (!r.ok) return setError(r.error);
         onClose();
       }}

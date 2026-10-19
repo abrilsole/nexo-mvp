@@ -57,7 +57,7 @@ describe("lectura de admin_members()", () => {
       members: [{ user_id: "u1", display_name: "Laura", email: "l@x.com", role: "owner", deactivated_at: null, created_at: "2026-01-01", operator_id: null, is_self: true }],
       invitations: [{ id: "i1", email: "m@x.com", display_name: "Martín", role: "compras", operator_id: null, created_at: "2026-02-01" }],
     });
-    expect(r.members[0]).toEqual({ userId: "u1", displayName: "Laura", email: "l@x.com", role: "owner", deactivatedAt: undefined, createdAt: "2026-01-01", operatorId: undefined, isSelf: true });
+    expect(r.members[0]).toEqual({ canViewCommercial: false, userId: "u1", displayName: "Laura", email: "l@x.com", role: "owner", deactivatedAt: undefined, createdAt: "2026-01-01", operatorId: undefined, isSelf: true });
     expect(r.invitations[0]).toMatchObject({ id: "i1", role: "compras", displayName: "Martín" });
   });
 });

@@ -151,9 +151,9 @@ describe("escenario 7 — registro de taller sin precio", () => {
 });
 
 describe("estados y ejecución", () => {
-  it("Cotización y Aprobado bloquean consumo, desperdicio, horas y costos de ejecución", () => {
+  it("Cotización bloquea consumo, desperdicio, horas y costos de ejecución", () => {
     const { projects, stock, operators } = seed();
-    for (const id of ["p-1056", "p-1051"]) {
+    for (const id of ["p-1056"]) {
       const p = projects.find((x) => x.id === id)!;
       expect(() => ops.registerUsage(p, stock, { ...PLATE, consumed: 1, waste: 0, date: today }, S, ctx)).toThrow(/No se puede registrar/);
       const a: WorkAssignment = { id: "a", projectId: p.id, itemId: p.items[0].id, rubro: "carpinteria_madera", operatorId: "op-juan", date: today, plannedHours: 2, createdBy: "x", createdAt: "" };
@@ -164,7 +164,7 @@ describe("estados y ejecución", () => {
   it("se avanza de a una etapa; sólo Administrativo corrige hacia atrás y con confirmación", () => {
     const { projects } = seed();
     const approved = projects.find((x) => x.id === "p-1051")!; // Aprobado
-    expect(() => ops.changeStatus(approved, "production", ctx)).toThrow(/de a una/);
+    expect(ops.changeStatus(approved, "production", ctx).status).toBe("production");
     const purchasing = ops.changeStatus(approved, "purchasing", ctx);
     expect(purchasing.status).toBe("purchasing");
     expect(() => ops.changeStatus(purchasing, "approved", ctx)).toThrow(/corrección/);

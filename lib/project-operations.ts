@@ -35,7 +35,6 @@ import {
   CATEGORY_LABELS,
   type OtherCostCategory,
   STATUS_LABELS,
-  STATUS_ORDER,
 } from "./constants";
 import { actualByCategory, budgetByCategory, budgetLineTotal, budgetTotal } from "./calculations";
 import { actualMessage, activity, createId, leftoverMessage, purchaseMessage, usageMessage } from "./activity";
@@ -478,6 +477,7 @@ export function addActual(project: Project, input: ActualInput, settings: AlertS
  * Proyecto, producto, rubro, operario y fecha salen de la asignación: no se tipean.
  */
 export interface HoursInput {
+  requestId?: string;
   assignmentId: string;
   hours: number;
   /** Tipo de trabajo (por defecto, el rubro). */
@@ -519,16 +519,16 @@ export function logHours(
   const workType = input.workType?.trim() || rubroDef(a.rubro).label;
   const hourlyCost = costAt(op, a.date);
   const entry: ActualEntry = {
-    id: createId("act"),
+    id: input.requestId ?? createId("act"),
     projectId: project.id,
     date: a.date,
     type: "labor",
-    category: "labor",
+    category: a.hourKind ?? "labor",
     description: `${workType} — ${op.name}`,
     amount: Math.round(input.hours * hourlyCost * 100) / 100,
     labor: { role: workType, workerName: op.name, hours: input.hours, hourlyCost },
     operatorId: op.id,
-    stage: project.status as StageKey,
+    stage: project.status === "approved" ? "production" : project.status as StageKey,
     itemId: a.itemId,
     rubro: a.rubro,
     assignmentId: a.id,
@@ -668,7 +668,7 @@ export function addStageLog(project: Project, input: StageLogInput, ctx: Ctx): {
   assertCanWork(project, ctx);
   const text = input.text.trim();
   if (text.length < 3) throw new DomainError("Contá brevemente qué pasó.");
-  if (STATUS_ORDER.indexOf(input.stage) > STATUS_ORDER.indexOf(project.status)) {
+  if (project.status === "quotation") {
     throw new RuleError(`El proyecto todavía no llegó a ${STATUS_LABELS[input.stage]}.`);
   }
   const log: StageLog = {

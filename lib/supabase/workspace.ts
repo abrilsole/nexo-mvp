@@ -43,6 +43,7 @@ import {
 } from "./mappers";
 
 export interface WorkspaceData {
+  reviewedHoursKeys?: string[];
   projects: Project[];
   /** Asignaciones del Jefe de planta (Lote 5B). Las lee Administrativo y Jefe de planta; el Operario, las suyas. */
   assignments: WorkAssignment[];
@@ -99,7 +100,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
   const membership = check(
     await db
       .from("organization_members")
-      .select("organization_id, display_name, role, deactivated_at, organizations(name, demo_seeded, is_demo, alert_settings)")
+      .select("organization_id, display_name, role, can_view_commercial, deactivated_at, organizations(name, demo_seeded, is_demo, alert_settings)")
       .eq("user_id", user.id)
       .order("created_at")
       .limit(1)
@@ -108,6 +109,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
     organization_id: string;
     display_name: string;
     role: AppRole;
+    can_view_commercial: boolean;
     deactivated_at: string | null;
     organizations: { name: string; demo_seeded: boolean; is_demo: boolean; alert_settings: AlertSettings | null } | null;
   } | null;
@@ -115,6 +117,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
   // Operario, Compras y Jefe de planta no leen las tablas (tienen importes): lo suyo llega por su función.
   if (membership.role === "operator") return loadTallerWorkspace(db, user, membership.display_name);
   if (membership.deactivated_at) throw new Error(INACTIVE_USER_MESSAGE);
+  if (membership.role === "member" && !membership.can_view_commercial) return loadStaffWorkspace(db, user, "jefe_planta");
   if (membership.role === "compras" || membership.role === "jefe_planta") return loadStaffWorkspace(db, user, membership.role);
   if (!membership.organizations) throw new Error("Tu usuario no tiene una empresa asociada.");
 
@@ -181,6 +184,7 @@ export async function loadWorkspace(db: SupabaseClient): Promise<Workspace> {
   }
 
   return {
+    reviewedHoursKeys: (await loadOptional(db, "hours_reviews", org, r => String(r.review_key))),
     organizationId: org,
     organizationName: membership.organizations.name,
     userId: user.id,
@@ -217,7 +221,8 @@ export const DEFAULT_COST_SETTINGS: CostSettings = {
 /** Asignaciones vigentes (las quitadas quedan en la base con removed_at). Sin la tabla todavía: lista vacía. */
 async function loadAssignments(db: SupabaseClient, org: string): Promise<WorkAssignment[]> {
   const { data, error } = await db.from("work_assignments").select("*").eq("organization_id", org).is("removed_at", null).order("date");
-  if (error || !data) return [];
+  if (error) throw new Error(error.message);
+  if (!data) return [];
   return (data as Record<string, unknown>[]).map(assignmentFromRow);
 }
 
@@ -225,7 +230,8 @@ async function loadAssignments(db: SupabaseClient, org: string): Promise<WorkAss
 /** Excepciones de días laborales vigentes (las quitadas quedan con removed_at). Sin la tabla todavía: lista vacía. */
 async function loadDayExceptions(db: SupabaseClient, org: string): Promise<DayException[]> {
   const { data, error } = await db.from("operator_day_exceptions").select("*").eq("organization_id", org).is("removed_at", null).order("date");
-  if (error || !data) return [];
+  if (error) throw new Error(error.message);
+  if (!data) return [];
   return (data as Record<string, unknown>[]).map(dayExceptionFromRow);
 }
 
@@ -234,14 +240,16 @@ async function loadOrders(db: SupabaseClient, org: string): Promise<PurchaseOrde
     db.from("purchase_orders").select("*").eq("organization_id", org).order("number"),
     db.from("purchase_order_lines").select("*").eq("organization_id", org).is("removed_at", null).order("position"),
   ]);
-  if (o.error || l.error || !o.data || !l.data) return [];
+  if (o.error || l.error) throw new Error((o.error ?? l.error)!.message);
+  if (!o.data || !l.data) return [];
   return ordersFromRows(o.data as Row[], l.data as Row[]);
 }
 
 /** Tabla de Administrativo que puede no existir todavía en la base (migración pendiente): sin ella, lista vacía. */
 async function loadOptional<T>(db: SupabaseClient, table: string, org: string, map: (r: Record<string, unknown>) => T): Promise<T[]> {
   const { data, error } = await db.from(table).select("*").eq("organization_id", org);
-  if (error || !data) return [];
+  if (error) throw new Error(error.message);
+  if (!data) return [];
   return (data as Record<string, unknown>[]).map(map);
 }
 
@@ -249,14 +257,16 @@ async function loadOptional<T>(db: SupabaseClient, table: string, org: string, m
 async function loadCostSettings(db: SupabaseClient, org: string): Promise<CostSettings> {
   const { data, error } = await db.from("cost_settings").select("*").eq("organization_id", org).maybeSingle();
   // Si la tabla todavía no existe en la base, se usa el valor por defecto en lugar de romper la carga.
-  if (error || !data) return { ...DEFAULT_COST_SETTINGS };
+  if (error) throw new Error(error.message);
+  if (!data) return { ...DEFAULT_COST_SETTINGS };
   return costSettingsFromRow(data as Record<string, unknown>);
 }
 
 /** Tipos de hora con su tarifa (tabla de Gestión). Sin filas → las tarifas iniciales. */
 async function loadHourRates(db: SupabaseClient, org: string): Promise<HourRate[]> {
   const { data, error } = await db.from("hour_rates").select("*").eq("organization_id", org).order("position");
-  if (error || !data || data.length === 0) return DEFAULT_HOUR_RATES.map((r) => ({ ...r }));
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) return DEFAULT_HOUR_RATES.map((r) => ({ ...r }));
   return (data as Record<string, unknown>[]).map(hourRateFromRow);
 }
 
@@ -397,6 +407,7 @@ async function loadStaffWorkspace(db: SupabaseClient, user: { id: string; email?
     userName: json.display_name || user.email?.split("@")[0] || "Usuario",
     userEmail: user.email ?? "",
     role,
+    reviewedHoursKeys: await loadOptional(db, "hours_reviews", json.organization_id, r => String(r.review_key)),
     costSettings: { ...DEFAULT_COST_SETTINGS, hoursPerDay: hoursPerDayOf(json.hours_per_day) },
     hourRates: [],
     priceHistory: (json.price_history ?? []).map(priceRecordFromRow),
@@ -648,4 +659,34 @@ export async function replaceWorkspace(db: SupabaseClient, org: string, data: Wo
   }
   // Con la demo cargada la empresa queda como demo; al vaciar, deja de serlo.
   check(await db.from("organizations").update({ is_demo: data !== null }).eq("id", org));
+}
+
+/** Delta de una operación: no vuelve a escribir registros históricos ajenos al cambio. */
+export function commitPayload(org: string, prev: Pick<WorkspaceData,"projects"|"stock"|"operators"|"requests">, next: Pick<WorkspaceData,"projects"|"stock"|"operators"|"requests">) {
+  const tables: Record<string,{rows:Record<string,unknown>[];removed:string[]}> = {};
+  const put = <T extends {id:string}>(table:string, before:T[], after:T[], map:(value:T,index:number)=>Record<string,unknown>) => {
+    const old = new Map(before.map(x=>[x.id,x]));
+    const rows=after.flatMap((x,i)=>old.get(x.id) === x ? [] : [map(x,i)]);
+    const ids=removed(before,after);
+    if (rows.length || ids.length) { const prior=tables[table]; tables[table]={rows:[...(prior?.rows ?? []),...rows],removed:[...(prior?.removed ?? []),...ids]}; }
+  };
+  const expected_projects: Array<{id:string;updated_at:string|null}> = [];
+  for(const project of next.projects) {
+    const before=prev.projects.find(p=>p.id === project.id);
+    if(before === project) continue;
+    expected_projects.push({id:project.id,updated_at:before?.updatedAt ?? null});
+    tables.projects ??= {rows:[],removed:[]};tables.projects.rows.push(projectToRow(org,project));
+    for(const key of CHILD_KEYS) {
+      const rows=childrenToRows(key,org,project.id,project[key]);
+      put(CHILD_TABLES[key],(before?.[key] ?? []) as {id:string}[],project[key] as {id:string}[],(_,i)=>rows[i]);
+    }
+  }
+  put("operators",prev.operators,next.operators,(o,i)=>operatorToRow(org,o,i));
+  put("stock_lots",prev.stock.lots,next.stock.lots,l=>lotToRow(org,l));
+  put("stock_movements",prev.stock.movements,next.stock.movements,(m,i)=>movementToRow(org,m,i));
+  put("material_requests",prev.requests,next.requests,(r,i)=>requestToRow(org,r,i));
+  return {expected_projects,tables};
+}
+export async function commitChange(db:SupabaseClient,org:string,prev:Pick<WorkspaceData,"projects"|"stock"|"operators"|"requests">,next:Pick<WorkspaceData,"projects"|"stock"|"operators"|"requests">) {
+  check(await db.rpc("admin_commit_change",{p:commitPayload(org,prev,next)}));
 }

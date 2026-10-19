@@ -30,7 +30,7 @@ export function myDay(projects: Project[], assignments: WorkAssignment[], operat
       const project = projects.find((p) => p.id === a.projectId);
       if (!project) return [];
       const logged = round2(project.actualEntries.filter((e) => e.assignmentId === a.id).reduce((s, e) => s + (e.labor?.hours ?? 0), 0));
-      return [{ assignment: a, project, item: project.items.find((i) => i.id === a.itemId), logged, done: logged > 0 }];
+      return [{ assignment: a, project, item: project.items.find((i) => i.id === a.itemId), logged, done: logged >= a.plannedHours }];
     });
   return { items, total: round2(items.reduce((s, i) => s + i.logged, 0)) };
 }

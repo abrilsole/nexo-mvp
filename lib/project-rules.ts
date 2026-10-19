@@ -12,13 +12,13 @@ import { daysBetween, formatNumber } from "./formatting";
 export class RuleError extends Error {}
 
 /** Etapas en las que se ejecuta el trabajo (consumo, horas, costos). */
-export const EXECUTION_STATUSES: ProjectStatus[] = ["purchasing", "production", "installation"];
+export const EXECUTION_STATUSES: ProjectStatus[] = ["approved", "purchasing", "production", "installation"];
 
 /** Etapas con bitácora propia. */
-export const STAGE_STATUSES = EXECUTION_STATUSES as readonly ("purchasing" | "production" | "installation")[];
+export const STAGE_STATUSES = ["purchasing", "production", "installation"] as const;
 
 /** Etapas donde el taller trabaja (producción e instalación). Compras es de Gestión. */
-export const SHOP_FLOOR_STATUSES: ProjectStatus[] = ["purchasing", "production", "installation"];
+export const SHOP_FLOOR_STATUSES: ProjectStatus[] = ["approved", "purchasing", "production", "installation"];
 
 export function isManager(role: AppRole): boolean {
   return role === "owner" || role === "member";
@@ -38,7 +38,7 @@ export function assertExecutable(project: Pick<Project, "status" | "isClosed">, 
   if (project.isClosed) throw new RuleError("El proyecto está cerrado: no admite nuevos registros.");
   if (!canExecute(project.status)) {
     throw new RuleError(
-      `No se puede registrar ${what} en un proyecto en ${STATUS_LABELS[project.status]}. Pasalo a Compras para empezar a ejecutar.`,
+      `No se puede registrar ${what} en un proyecto en ${STATUS_LABELS[project.status]}. Aprobá el proyecto para empezar a ejecutar.`,
     );
   }
 }
@@ -47,6 +47,7 @@ export function assertExecutable(project: Pick<Project, "status" | "isClosed">, 
 
 /** Estados a los que se puede ir desde `from`: el siguiente (avanzar) o cualquiera anterior (corregir). */
 export function nextStatus(from: ProjectStatus): ProjectStatus | null {
+  if (from === "approved") return "production";
   const i = STATUS_ORDER.indexOf(from);
   const next = STATUS_ORDER[i + 1];
   return next && next !== "completed" ? next : null;
@@ -61,7 +62,7 @@ export type TransitionKind = "forward" | "backward";
 
 export function transitionKind(from: ProjectStatus, to: ProjectStatus): TransitionKind | null {
   if (to === "completed" || to === from) return null;
-  if (nextStatus(from) === to) return "forward";
+  if (nextStatus(from) === to || (from === "approved" && to === "purchasing")) return "forward";
   if (previousStatuses(from).includes(to)) return "backward";
   return null;
 }
@@ -142,7 +143,7 @@ export function checkHours(
   /** Por encima se avisa (no se bloquea): la jornada de Configuración (Lote 5B). */
   warnAbove: number = HOURS_WARN_PER_DAY,
 ): HoursCheck {
-  if (!(hours > 0)) return { level: "block", dayTotal: 0, message: "Las horas tienen que ser más que 0." };
+  if (!Number.isFinite(hours) || !(hours > 0)) return { level: "block", dayTotal: 0, message: "Las horas tienen que ser más que 0." };
   if (date > today) return { level: "block", dayTotal: hours, message: "No se pueden cargar horas de una fecha futura." };
   const prior = entries
     .filter((e) => e.type === "labor" && e.operatorId === operatorId && e.date === date)

@@ -1,4 +1,5 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useMemo, useState } from "react";
 import type { Operator } from "@/types";
 import { STATUS_LABELS } from "@/lib/constants";
@@ -18,7 +19,7 @@ export function DeactivatePanel({ operator, onCancel, onDone }: { operator: Oper
   const projects = useAppStore((s) => s.projects);
   const operators = useAppStore((s) => s.operators);
   const requests = useAppStore((s) => s.requests);
-  const deactivateOperator = useAppStore((s) => s.deactivateOperator);
+  const deactivateOperator = useConfirmedAction("deactivateOperator");
   const open = useMemo(() => openProjectsOf(projects, operator.id), [projects, operator.id]);
   const candidates = useMemo(() => activeOperators(operators).filter((o) => o.id !== operator.id), [operators, operator.id]);
   const openRequests = requests.filter((r) => r.status === "open" && r.requestedBy === operator.name).length;
@@ -39,8 +40,8 @@ export function DeactivatePanel({ operator, onCancel, onDone }: { operator: Oper
     if (v) setChoice(Object.fromEntries(open.map((p) => [p.id, v])));
   };
 
-  const confirm = () => {
-    const r = deactivateOperator(operator.id, plan);
+  const confirm = async () => {
+    const r = await deactivateOperator(operator.id, plan);
     if (!r.ok) return setError(r.error);
     onDone();
   };

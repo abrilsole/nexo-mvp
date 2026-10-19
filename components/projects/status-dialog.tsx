@@ -1,9 +1,9 @@
 "use client";
+import { useConfirmedAction } from "@/store/confirmed-action";
 import { useState } from "react";
 import type { Project, ProjectStatus } from "@/types";
 import { STATUS_LABELS } from "@/lib/constants";
 import { nextStatus, previousStatuses } from "@/lib/project-rules";
-import { useAppStore } from "@/store/use-app-store";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
@@ -15,14 +15,14 @@ const NOTES: Partial<Record<ProjectStatus, string>> = {
 
 /** Cambio de etapa de a un paso. Volver atrás es una corrección y pide confirmación. */
 export function StatusDialog({ project, open, onOpenChange }: { project: Project; open: boolean; onOpenChange: (o: boolean) => void }) {
-  const changeProjectStatus = useAppStore((s) => s.changeProjectStatus);
+  const changeProjectStatus = useConfirmedAction("changeProjectStatus");
   const [error, setError] = useState("");
   const [back, setBack] = useState<ProjectStatus | "">("");
   const next = nextStatus(project.status);
   const prev = previousStatuses(project.status);
 
-  const go = (to: ProjectStatus, confirmBack = false) => {
-    const r = changeProjectStatus(project.id, to, { confirmBack });
+  const go = async (to: ProjectStatus, confirmBack = false) => {
+    const r = await changeProjectStatus(project.id, to, { confirmBack });
     if (!r.ok) return setError(r.error);
     onOpenChange(false);
   };
